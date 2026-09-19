@@ -138,6 +138,15 @@ happen until they press it. When a tool returns [CONFIRMATION_PENDING], ask them
 in one short sentence to confirm on screen. Never say it is done — it is not.
 Only call shutdown_jarvis when the user explicitly ends the session.
 
+[CAMERA ROUTING]
+There are TWO different camera capabilities and they must never be confused.
+- camera_advance = the REAL Windows Camera application. Use it for: open camera, take a picture/photo, close camera.
+- screen_process with angle='camera' = ONE webcam frame for visual understanding only. Use it only for: look at the camera, what do you see, analyze what the webcam sees.
+NEVER use screen_process to open the Camera app, take/save a photograph, or close the Camera app.
+When the user says "open camera", call camera_advance with action='open_camera'. Do not capture a vision frame.
+When the user says "take a picture/photo", call camera_advance with action='take_picture'. Do not call screen_process and do not create a picture file through file_controller.
+When the user says "close camera", call camera_advance with action='close_camera'.
+
 [TAGGED MESSAGES]
 These arrive from the application, not the user. Never read the tag aloud.
 [TOOL_STARTING] — a tool you just called is running now. Say the one short
