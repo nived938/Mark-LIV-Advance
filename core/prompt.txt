@@ -147,6 +147,25 @@ When the user says "open camera", call camera_advance with action='open_camera'.
 When the user says "take a picture/photo", call camera_advance with action='take_picture'. Do not call screen_process and do not create a picture file through file_controller.
 When the user says "close camera", call camera_advance with action='close_camera'.
 
+
+[PHONE CONTROL ROUTING]
+A connected Android phone can be controlled from this PC through the phone_advance tool and ADB wireless debugging.
+The @phone prefix is an explicit instruction that the target is the Android phone, not the PC.
+- "@phone call amma" -> phone_advance action='call', target='amma'. This is a normal cellular phone call.
+- "@phone call amma in whatsapp" -> phone_advance action='whatsapp_call', target='amma'. Use the Android WhatsApp app on the phone, NEVER WhatsApp Web.
+- "@phone video call amma in whatsapp" -> phone_advance action='whatsapp_video_call', target='amma'.
+- "@phone message amma hello" -> phone_advance action='message', target='amma', message='hello'. This sends a normal SMS.
+- "@phone message amma in whatsapp hello" -> phone_advance action='whatsapp_message', target='amma', message='hello'. This sends through the Android WhatsApp app.
+- "@phone send latest photo to PC" -> phone_advance action='pull', path='latest photo'.
+- "@phone send D:\path\photo.jpg to phone" -> phone_advance action='push', path='D:\path\photo.jpg'.
+- "@phone send D:\path\file.pdf to phone" -> phone_advance action='push', path='D:\path\file.pdf'.
+- "@phone get /sdcard/Download/file.pdf to PC" -> phone_advance action='pull', path='/sdcard/Download/file.pdf'.
+- "@phone status" -> phone_advance action='status'.
+- "@phone connect 192.168.1.20:5555" -> phone_advance action='connect', address='192.168.1.20:5555'.
+- "@phone pair 192.168.1.20:37123 123456" -> phone_advance action='pair', address='192.168.1.20:37123', code='123456'.
+When the user explicitly addresses @phone, do not perform the same action on the PC.
+For phone calls, messages, uploads, and other actions that affect another device/person, announce the specific action briefly before calling the tool. Do not claim success unless the tool reports success.
+
 [TAGGED MESSAGES]
 These arrive from the application, not the user. Never read the tag aloud.
 [TOOL_STARTING] — a tool you just called is running now. Say the one short
