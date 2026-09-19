@@ -186,6 +186,36 @@ def _send_by_phone(phone, message):
         return False, str(e)
 
 
+def _click_call_button(kind: str):
+    """Try to click the active WhatsApp desktop call button using UI Automation."""
+    win = _focus_whatsapp()
+    if not win:
+        return False, "WhatsApp window was not found."
+
+    wanted = (
+        ["video", "video call", "videocall"]
+        if kind == "video"
+        else ["voice call", "audio call", "call"]
+    )
+
+    try:
+        buttons = win.descendants(control_type="Button")
+        # Prefer exact/strong matches first.
+        for button in buttons:
+            try:
+                name = (button.window_text() or "").strip().lower()
+                if any(name == x or x in name for x in wanted):
+                    button.click_input()
+                    time.sleep(1)
+                    return True, ""
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return False, "The WhatsApp call button was not exposed through Windows UI Automation."
+
+
 def whatsapp_advance(
     action: str,
     contact: str = "",
@@ -194,92 +224,74 @@ def whatsapp_advance(
     confirmation: str = ""
 ):
     action = (action or "").lower().strip()
-    pending = _load_pending()
 
     if action in ("open", "open_whatsapp"):
         ok = _open_desktop()
         return "Opened the WhatsApp desktop app." if ok else "Could not open the WhatsApp desktop app."
 
-    if action in ("prepare_message", "message"):
+    if action in ("prepare_message", "message", "send", "send_message"):
         if not contact and not phone:
             return "A WhatsApp contact name or international phone number is required."
         if not message:
             return "The message text is required."
 
-        key = (contact.strip().lower() if contact else _clean_phone(phone))
-        pending[key] = {
-            "contact": contact.strip(),
-            "phone": _clean_phone(phone),
-            "message": message,
-        }
-        _save_pending(pending)
-
-        return (
-            f"READY_FOR_CONFIRMATION: WhatsApp message prepared for "
-            f"{contact or phone}: {message!r}. "
-            f"STOP and ask the user for explicit confirmation. "
-            f"After the user says yes/confirm/send it, call whatsapp_advance "
-            f"with action=send_confirmed and contact={contact!r} or phone={phone!r}, "
-            f"confirmation='yes'. Do not prepare the message again."
-        )
-
-    if action in ("send_confirmed", "confirm_and_send"):
-        accepted = {"yes", "y", "yeah", "yep", "sure", "confirm", "confirmed", "true", "send", "send it", "do it"}
-        if (confirmation or "").lower().strip() not in accepted:
-            return "REQUIRES_CONFIRMATION: Explicit user confirmation is required before sending."
-
-        key = contact.strip().lower() if contact else _clean_phone(phone)
-        if not key and len(pending) == 1:
-            key = next(iter(pending))
-
-        item = pending.get(key)
-        if not item:
-            return (
-                "No prepared WhatsApp message was found for this confirmation. "
-                "Use the saved pending message instead of asking the user to repeat it."
-            )
-
-        if item["phone"]:
-            ok, error = _send_by_phone(item["phone"], item["message"])
+        if phone:
+            ok, error = _send_by_phone(phone, message)
         else:
-            ok, error = _send_message_desktop(item["contact"], item["message"])
+            ok, error = _send_message_desktop(contact, message)
 
         if not ok:
             return f"WhatsApp send failed: {error}"
+        return f"Sent the WhatsApp message to {contact or phone}."
 
-        pending.pop(key, None)
-        _save_pending(pending)
-        return f"Sent the WhatsApp message to {item['contact'] or item['phone']}."
+    if action in ("send_confirmed", "confirm_and_send"):
+        # Kept as a backwards-compatible alias. Confirmation is no longer required.
+        if not contact and not phone:
+            return "A WhatsApp contact name or international phone number is required."
+        if not message:
+            return "The message text is required."
+
+        if phone:
+            ok, error = _send_by_phone(phone, message)
+        else:
+            ok, error = _send_message_desktop(contact, message)
+
+        if not ok:
+            return f"WhatsApp send failed: {error}"
+        return f"Sent the WhatsApp message to {contact or phone}."
 
     if action in ("call", "voice_call", "video_call"):
         target = contact or phone
         if not target:
             return "A WhatsApp contact name or phone number is required."
 
-        if (confirmation or "").lower().strip() not in {
-            "yes", "y", "yeah", "yep", "sure", "confirm", "confirmed", "true", "do it"
-        }:
-            return (
-                f"REQUIRES_CONFIRMATION: Start a WhatsApp "
-                f"{'video' if action == 'video_call' else 'voice'} call with {target}. "
-                f"Wait for explicit confirmation."
-            )
-
         _open_desktop()
         time.sleep(2.5)
+
         if contact:
-            _click_search_and_find(contact)
+            ok, error = _click_search_and_find(contact)
+            if not ok:
+                return f"Could not open the WhatsApp chat for {target}: {error}"
+        else:
+            try:
+                os.startfile("whatsapp://send?phone=" + _clean_phone(phone))
+                time.sleep(3)
+            except Exception as e:
+                return f"Could not open the WhatsApp contact: {e}"
+
+        kind = "video" if action == "video_call" else "voice"
+        ok, error = _click_call_button(kind)
+
+        if ok:
+            return f"Started a WhatsApp {kind} call with {target}."
 
         return (
-            f"Opened WhatsApp to {target}. "
-            f"The final {'video' if action == 'video_call' else 'voice'} call button "
-            f"must be pressed manually because the Windows WhatsApp app does not provide "
-            f"a stable public call URI."
+            f"Opened WhatsApp to {target}, but Windows UI Automation could not find "
+            f"the {kind} call button. {error}"
         )
 
     return (
-        "Unknown action. Use open_whatsapp, prepare_message, send_confirmed, "
-        "call, or video_call."
+        "Unknown action. Use open_whatsapp, message, send, call, or video_call."
     )
 
 
@@ -287,14 +299,13 @@ TOOL = {
     "name": "whatsapp_advance",
     "description": (
         "Control the INSTALLED WINDOWS WHATSAPP DESKTOP APP ONLY. Never use WhatsApp Web. "
-        "For messages: call prepare_message once, STOP and ask the user for confirmation. "
-        "When the user confirms, call send_confirmed using the SAME contact/phone and "
-        "confirmation='yes'. The prepared message is persisted to disk, so it remains "
-        "available across separate tool calls. Never ask the user to repeat the message. "
-        "The send_confirmed action searches for the contact in the desktop WhatsApp app, "
-        "selects the chat, types into the message compose box, and presses Enter. "
-        "Voice/video calls require confirmation and open the contact; the final call button "
-        "is manual because Windows WhatsApp has no stable public call URI."
+        "When the user explicitly asks to message, call, or video call a WhatsApp contact, "
+        "perform the action directly without asking for a confirmation step. For messages, "
+        "find the contact, open the chat, type the message, and press Enter. For voice/video "
+        "calls, find the contact and use Windows UI Automation to click the matching call "
+        "button automatically. Do not tell the user to press the call button manually unless "
+        "UI Automation genuinely cannot find the button. send_confirmed remains as a backwards-"
+        "compatible alias but does not require confirmation."
     ),
     "parameters": {
         "type": "OBJECT",
