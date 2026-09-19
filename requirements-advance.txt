@@ -1,0 +1,15 @@
+pyautogui
+pyperclip
+pygetwindow
+pillow
+mss
+psutil
+send2trash
+ddgs
+requests
+beautifulsoup4
+playwright
+python-dateutil
+win10toast; sys_platform == "win32"
+pywinauto; sys_platform == "win32"
+pywin32; sys_platform == "win32"
