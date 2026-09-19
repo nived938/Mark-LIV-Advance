@@ -342,12 +342,12 @@ TOOL_DECLARATIONS = [
     {
         "name": "screen_process",
         "description": (
-            "Captures the screen or webcam image and lets you analyze it. "
-            "MUST be called when user asks what is on screen, what you see, "
-            "look at camera, analyze my screen, etc. "
-            "You have NO visual ability without this tool. "
-            "After the image is captured it is sent directly to you — describe what you see and answer the user's question. "
-            "When using camera: the live view stays open until user says close it or calls close_camera."
+            "VISION ONLY. Use this tool when the user asks you to LOOK AT or ANALYZE "
+            "the current screen/webcam image, such as 'what do you see', 'look at my "
+            "camera', or 'what is in front of me'. DO NOT use this tool for 'open camera', "
+            "'take a picture/photo', or 'close camera' — those commands MUST use the "
+            "camera_advance tool. This tool captures one frame for vision and must never "
+            "create/save a photo file. A webcam vision frame is not a camera photograph."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -1166,11 +1166,14 @@ class JarvisLive:
                     angle     = args.get("angle", "screen").lower()
                     user_text = args.get("text", "What do you see?")
                     if angle == "camera":
+                        # One-frame vision only. The persistent Windows Camera app
+                        # is controlled by camera_advance.py, so this path must
+                        # never start or stop the app.
                         img_b, mime_t = await loop.run_in_executor(None, _capture_camera)
-                        self.ui.start_camera_stream()
-                        self._vision_cam_active = True
-                        print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
-                        _stall = "camera"
+                        self._vision_cam_active = False
+                        self._vision_close_pending = False
+                        print(f"[Vision] 📷 Webcam frame: {len(img_b):,} bytes")
+                        _stall = "webcam frame"
                     else:
                         img_b, mime_t = await loop.run_in_executor(None, _capture_screen)
                         print(f"[Vision] 🖥️  Screen: {len(img_b):,} bytes")
@@ -1562,13 +1565,10 @@ class JarvisLive:
                             out_buf = []
 
                             if self._vision_close_pending:
-                                # This turn_complete IS the vision answer — close camera + release busy flag
+                                # Compatibility with the old vision state. Normal
+                                # webcam vision no longer owns the Camera app.
                                 self._vision_close_pending = False
                                 self._vision_busy = False
-                                async def _cam_close():
-                                    await asyncio.sleep(2.0)
-                                    self.ui.stop_camera_stream()
-                                asyncio.create_task(_cam_close())
 
                     if response.tool_call:
                         fn_responses = []
