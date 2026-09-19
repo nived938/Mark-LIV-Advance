@@ -209,66 +209,95 @@ def _whatsapp_message(target: str, message: str) -> str:
     return f"WhatsApp opened the chat with {target}, but the Send button could not be located automatically."
 
 
+
+def _xml_nodes(xml: str):
+    for raw in re.findall(r"<node\b[^>]*?/>", xml, re.I):
+        attrs = {}
+        for key, value in re.findall(r'([\w:-]+)="([^"]*)"', raw):
+            attrs[key] = value
+        b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', raw)
+        if not b:
+            continue
+        attrs["_bounds"] = tuple(int(x) for x in b.groups())
+        yield attrs
+
+
+def _tap_whatsapp_call_control(xml: str, video: bool) -> bool:
+    nodes = list(_xml_nodes(xml))
+    preferred = []
+    fallback = []
+    for node in nodes:
+        rid = node.get("resource-id", "").lower()
+        desc = node.get("content-desc", "").lower()
+        text = node.get("text", "").lower()
+        hay = " ".join((rid, desc, text))
+        if "call" not in hay:
+            continue
+        if video and "video" in hay:
+            preferred.append(node)
+        elif not video and "video" not in hay:
+            if "voice" in hay:
+                preferred.append(node)
+            else:
+                fallback.append(node)
+
+    candidates = preferred or fallback
+    for node in candidates:
+        x1, y1, x2, y2 = node["_bounds"]
+        if x2 <= x1 or y2 <= y1:
+            continue
+        ok, _, _ = _d(["shell", "input", "tap", str((x1+x2)//2), str((y1+y2)//2)], timeout=8)
+        if ok:
+            return True
+    return False
+
 def _whatsapp_call(target: str, video: bool = False) -> str:
     number = target if re.search(r"\d", target) else _resolve_contact(target)
     if not number:
-        return f"I could not find a phone contact named {target}."
+        return f"I could not find a phone contact named \${target}."
     number = _normalize_number(number)
     if not number.startswith("+"):
         return "Save the WhatsApp contact with the international country code first."
-
     if not _launch_whatsapp():
         return "Could not open WhatsApp on the phone."
     time.sleep(1.5)
-
-    # Open the chat/contact by deep link first.
     uri = f"https://wa.me/{number.lstrip('+')}"
-    ok, _, err = _d([
-        "shell", "am", "start", "-a", "android.intent.action.VIEW",
-        "-d", uri, "-p", "com.whatsapp",
-    ], timeout=20)
+    ok, _, err = _d(["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", uri, "-p", "com.whatsapp"], timeout=20)
     if not ok:
-        return f"Could not open the WhatsApp contact: {err}"
-    time.sleep(1.5)
+        return f"Could not open the WhatsApp contact: \${err}"
+    time.sleep(2.0)
+    for _ in range(3):
+        ok, _, _ = _d(["shell", "uiautomator", "dump", "/sdcard/window.xml"], timeout=15)
+        ok2, xml, _ = _d(["shell", "cat", "/sdcard/window.xml"], timeout=10)
+        if ok and ok2 and _tap_whatsapp_call_control(xml, video):
+            return f"WhatsApp {'video ' if video else ''}call started with \${target}."
+        time.sleep(0.8)
+    return f"WhatsApp opened \${target}'s chat, but the {'video' if video else 'voice'} call control could not be located."
 
-    ok, _, _ = _d(["shell", "uiautomator", "dump", "/sdcard/window.xml"], timeout=15)
-    ok2, xml, _ = _d(["shell", "cat", "/sdcard/window.xml"], timeout=10)
-    if not (ok and ok2):
-        return "WhatsApp opened, but its controls could not be inspected."
 
-    patterns = (
-        ("video", r'content-desc="([^"]*video call[^"]*)"',),
-        ("audio", r'content-desc="([^"]*(?:voice call|call)[^"]*)"',),
-    )
-    wanted = "video" if video else "audio"
-    candidates = []
-    for kind, pat in patterns:
-        if kind != wanted:
-            continue
-        candidates.extend(re.finditer(
-            pat + r'[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-            xml, re.I
-        ))
-    if not candidates:
-        # Some WhatsApp builds expose the button through text instead.
-        label = "video call" if video else "call"
-        candidates = list(re.finditer(
-            r'text="([^"]*' + re.escape(label) +
-            r'[^"]*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-            xml, re.I
-        ))
+def _phone_camera(action: str) -> str:
+    action = action.lower().strip()
+    if action == "open":
+        ok, out, err = _d(["shell", "am", "start", "-a", "android.media.action.IMAGE_CAPTURE"], timeout=20)
+        return "Phone camera opened." if ok else f"Could not open the phone camera: \${err or out}"
+    if action == "close":
+        ok, _, err = _d(["shell", "input", "keyevent", "4"], timeout=8)
+        return "Phone camera closed." if ok else f"Could not close the phone camera: \${err}"
+    if action == "take":
+        ok, _, err = _d(["shell", "am", "start", "-a", "android.media.action.IMAGE_CAPTURE"], timeout=20)
+        if not ok:
+            return f"Could not open the phone camera: \${err}"
+        time.sleep(2.0)
+        ok, _, err = _d(["shell", "input", "keyevent", "27"], timeout=8)
+        if not ok:
+            return f"Phone camera opened, but the shutter could not be triggered: \${err}"
+        time.sleep(2.0)
+        ok, out, err = _d(["shell", "sh", "-c", "ls -t /sdcard/DCIM/Camera/* 2>/dev/null | head -n 1"], timeout=15)
+        if ok and out:
+            return f"Phone photo captured: {out.splitlines()[-1].strip()}"
+        return "The phone camera shutter was triggered, but the new photo path could not be found."
+    return "Unknown phone camera action."
 
-    if candidates:
-        m = candidates[0]
-        nums = [int(x) for x in m.groups() if x.isdigit()]
-        if len(nums) >= 4:
-            x = (nums[-4] + nums[-2]) // 2
-            y = (nums[-3] + nums[-1]) // 2
-            ok, _, err = _d(["shell", "input", "tap", str(x), str(y)], timeout=8)
-            if ok:
-                return f"WhatsApp {'video ' if video else ''}call started with {target}."
-
-    return f"WhatsApp opened {target}'s chat, but the {'video' if video else 'voice'} call control could not be located."
 
 
 def _send_sms(target: str, message: str) -> str:
@@ -368,6 +397,15 @@ def phone_advance(
     if action in ("whatsapp_video_call", "wa_video_call", "video_call"):
         return _whatsapp_call(target, video=True)
 
+    if action in ("open_camera", "phone_camera_open"):
+        return _phone_camera("open")
+
+    if action in ("take_photo", "take_picture", "phone_camera_photo"):
+        return _phone_camera("take")
+
+    if action in ("close_camera", "phone_camera_close"):
+        return _phone_camera("close")
+
     if action in ("pull", "from_phone", "phone_to_pc", "get_file"):
         return _pull_file(path, destination)
 
@@ -383,7 +421,7 @@ TOOL = {
         "Control the user's Android phone from this Windows PC through ADB wireless debugging. "
         "Use ONLY when the user explicitly uses @phone or asks to control the connected phone. "
         "Actions: status, pair, connect, call a normal phone contact, send an SMS, "
-        "whatsapp_message, whatsapp_call, whatsapp_video_call, pull a photo/file from phone "
+        "whatsapp_message, whatsapp_call, whatsapp_video_call, open_camera, take_photo, close_camera, pull a photo/file from phone "
         "to PC, and push a photo/file from PC to phone. Resolve contact names from the phone's "
         "Contacts provider. For '@phone call amma' use action=call. For '@phone call amma in "
         "whatsapp' use action=whatsapp_call. For '@phone video call amma in whatsapp' use "
@@ -398,7 +436,7 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "status, pair, connect, call, message, whatsapp_message, whatsapp_call, whatsapp_video_call, pull, or push",
+                "description": "status, pair, connect, call, message, whatsapp_message, whatsapp_call, whatsapp_video_call, open_camera, take_photo, close_camera, pull, or push",
             },
             "target": {"type": "STRING", "description": "Phone contact name or phone number"},
             "message": {"type": "STRING", "description": "SMS or WhatsApp message text"},
