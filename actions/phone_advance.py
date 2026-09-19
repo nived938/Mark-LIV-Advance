@@ -184,8 +184,7 @@ def _whatsapp_message(target: str, message: str) -> str:
             if m:
                 rid = m.group(2)
                 if rid:
-                    ok3, _, _ = _d(["shell", "input", "tap", "0", "0"], timeout=5)
-                    # Prefer coordinate extracted from the node bounds.
+                    # Prefer the exact coordinate extracted from the node bounds.
                     node = re.search(
                         r'<node[^>]*resource-id="' + re.escape(rid) +
                         r'"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
