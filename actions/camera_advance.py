@@ -1,276 +1,113 @@
-import os
+from __future__ import annotations
+
 import time
 from pathlib import Path
-import subprocess
 
 try:
-    import pyautogui
+    from PyQt6.QtWidgets import QApplication
 except Exception:
-    pyautogui = None
-
-try:
-    from pywinauto import Desktop
-except Exception:
-    Desktop = None
-
-try:
-    import cv2
-except Exception:
-    cv2 = None
-
-try:
-    from PIL import Image
-except Exception:
-    Image = None
-
-_CAMERA_URI = "microsoft.windows.camera:"
+    QApplication = None
 
 
-def _find_camera():
-    if not Desktop:
+def _jarvis_window():
+    """Return JARVIS's real MainWindow so camera stays inside the app."""
+    if QApplication is None:
         return None
     try:
-        for win in Desktop(backend="uia").windows():
-            try:
-                if "camera" in (win.window_text() or "").lower():
-                    return win
-            except Exception:
-                pass
-    except Exception:
-        pass
+        app = QApplication.instance()
+        if app is None:
+            return None
+        for widget in app.topLevelWidgets():
+            if hasattr(widget, "start_camera_stream") and hasattr(widget, "capture_camera_photo"):
+                return widget
+    except Exception as e:
+        print(f"[Camera] Could not find JARVIS window: {e}")
     return None
 
 
 def _open_camera():
+    win = _jarvis_window()
+    if win is None:
+        return False, "JARVIS UI is not available."
     try:
-        os.startfile(_CAMERA_URI)
-        # Never wait on or manage the Camera process. It must outlive the JARVIS
-        # response and stay open until the user explicitly asks to close it.
-        time.sleep(2.0)
-        return True, ""
+        win.start_camera_stream()
+        return True, "Embedded camera feed opened inside JARVIS."
     except Exception as e:
         return False, str(e)
 
 
-def _focus_camera():
-    win = _find_camera()
-    if not win:
-        return None
-    try:
-        win.restore()
-    except Exception:
-        pass
-    try:
-        win.set_focus()
-    except Exception:
-        pass
-    return win
-
-
-def _pictures_dirs():
-    home = Path.home()
-    return [d for d in (home / "Pictures" / "Camera Roll", home / "Pictures") if d.exists()]
-
-
-def _photo_files():
-    exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".heic", ".heif", ".tif", ".tiff"}
-    result = []
-    for directory in _pictures_dirs():
-        try:
-            result.extend(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in exts)
-        except Exception:
-            pass
-    return result
-
-
-def _newest_photo(before_names):
-    candidates = [p for p in _photo_files() if p.name not in before_names]
-    return max(candidates, key=lambda p: p.stat().st_mtime) if candidates else None
-
-
-def _normalise_photo(photo):
-    if not photo:
-        return None
-    if Image:
-        try:
-            with Image.open(photo) as img:
-                img.load()
-                rgb = img.convert("RGB")
-            out = photo.with_name(photo.stem + "_JARVIS.jpg")
-            rgb.save(out, "JPEG", quality=95, optimize=True)
-            with Image.open(out) as check:
-                check.verify()
-            return out
-        except Exception as e:
-            print(f"[Camera] Pillow conversion failed: {e}")
-    # HEIC/HEIF may not be supported by Pillow. Try ImageMagick if installed.
-    for command in ("magick", "convert"):
-        try:
-            found = subprocess.run(
-                ["where", command], capture_output=True,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            )
-            if found.returncode != 0:
-                continue
-            out = photo.with_name(photo.stem + "_JARVIS.jpg")
-            result = subprocess.run(
-                [command, str(photo), str(out)], capture_output=True,
-                text=True, timeout=20,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            if result.returncode == 0 and out.exists() and out.stat().st_size > 10_000:
-                return out
-        except Exception:
-            pass
-    return None
-
-
-def _fallback_camera_photo():
-    """Capture from the physical webcam as JPEG if Windows Camera used an
-    unsupported codec. This is a camera photo, never a desktop screenshot."""
-    if cv2 is None:
-        return None
-    directory = Path.home() / "Pictures" / "Camera Roll"
-    directory.mkdir(parents=True, exist_ok=True)
-    out = directory / f"JARVIS_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
-    for index in range(6):
-        cap = None
-        try:
-            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-            if not cap.isOpened():
-                continue
-            for _ in range(8):
-                cap.read()
-            ok, frame = cap.read()
-            if ok and frame is not None and cv2.imwrite(
-                str(out), frame, [cv2.IMWRITE_JPEG_QUALITY, 95]
-            ) and out.exists() and out.stat().st_size > 10_000:
-                return out
-        except Exception as e:
-            print(f"[Camera] fallback index {index}: {e}")
-        finally:
-            if cap is not None:
-                try:
-                    cap.release()
-                except Exception:
-                    pass
-    return None
-
-
 def _take_picture():
-    win = _focus_camera()
-    if not win:
-        ok, error = _open_camera()
-        if not ok:
-            return False, f"Could not open Windows Camera: {error}"
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            win = _focus_camera()
-            if win:
-                break
-            time.sleep(0.25)
-    if not win:
-        return False, "Windows Camera is open, but its shutter could not be located."
+    win = _jarvis_window()
+    if win is None:
+        return False, "JARVIS UI is not available."
 
-    before = {p.name for p in _photo_files()}
-    names = {"take photo", "take picture", "photo", "capture", "take photo button", "take picture button"}
-    clicked = False
     try:
-        for control in win.descendants():
-            try:
-                name = (control.window_text() or "").strip().lower()
-                aid = (getattr(control, "automation_id", lambda: "")() or "").strip().lower()
-                if name in names or aid in names:
-                    try:
-                        control.invoke()
-                        clicked = True
-                        break
-                    except Exception:
-                        try:
-                            control.click_input()
-                            clicked = True
-                            break
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+        # Make sure the embedded stream is running.
+        win.start_camera_stream()
     except Exception:
         pass
 
-    if not clicked and pyautogui:
-        try:
-            pyautogui.press("space")
-            clicked = True
-        except Exception as e:
-            return False, f"Could not activate the Camera shutter: {e}"
-    if not clicked:
-        return False, "Camera shutter control was not found. No picture was taken."
-
-    deadline = time.monotonic() + 12.0
-    photo = None
+    # Give the stream a moment to deliver a fresh frame.
+    deadline = time.monotonic() + 3.0
+    path = None
     while time.monotonic() < deadline:
-        photo = _newest_photo(before)
-        if photo:
-            try:
-                size1 = photo.stat().st_size
-                if size1 > 10_000:
-                    time.sleep(0.4)
-                    if photo.exists() and photo.stat().st_size == size1:
-                        break
-            except Exception:
-                pass
-        time.sleep(0.25)
+        try:
+            path = win.capture_camera_photo()
+        except Exception as e:
+            print(f"[Camera] Capture error: {e}")
+            path = None
+        if path:
+            return True, f"Picture saved as {path}"
+        time.sleep(0.10)
 
-    if photo:
-        normalised = _normalise_photo(photo)
-        if normalised:
-            return True, f"Picture saved as {normalised}"
-
-    # If the Windows Camera codec is unsupported, capture a JPEG from the same
-    # physical webcam. The Windows Camera window is deliberately left open.
-    fallback = _fallback_camera_photo()
-    if fallback:
-        return True, f"Picture saved as {fallback}"
-    return False, "The Camera shutter was activated, but no readable JPEG photo could be created."
+    return False, "The embedded camera is open, but no camera frame was available."
 
 
 def _close_camera():
+    win = _jarvis_window()
+    if win is None:
+        return "JARVIS UI is not available."
     try:
-        subprocess.run(
-            ["taskkill", "/IM", "WindowsCamera.exe", "/T", "/F"],
-            capture_output=True, text=True, timeout=5,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        return "Closed the Windows Camera app."
+        win.stop_camera_stream()
+        return "Closed the embedded camera feed in JARVIS."
     except Exception as e:
-        return f"Could not close Windows Camera: {e}"
+        return f"Could not close the embedded camera: {e}"
 
 
 def camera_advance(action: str):
     action = (action or "").lower().strip()
+
     if action in ("open", "open_camera", "start"):
-        ok, error = _open_camera()
-        return (
-            "Opened the Windows Camera app. It will stay open until you explicitly tell me to close the camera."
-            if ok else f"Could not open Windows Camera: {error}"
-        )
+        ok, result = _open_camera()
+        return result if ok else f"Could not open camera: {result}"
+
     if action in ("take_picture", "take_photo", "capture", "photo"):
         ok, result = _take_picture()
-        return f"{result}. The Windows Camera app remains open." if ok else f"Could not take a picture: {result}"
+        return result if ok else f"Could not take a picture: {result}"
+
     if action in ("close", "close_camera", "stop", "turn_off"):
         return _close_camera()
+
     return "Unknown camera action. Use open_camera, take_picture, or close_camera."
 
 
 TOOL = {
     "name": "camera_advance",
     "description": (
-        "Control the REAL WINDOWS CAMERA APP. For open_camera, launch Microsoft Windows Camera and KEEP IT OPEN; never close it because JARVIS starts speaking or a turn ends. For take_picture, use the real Camera shutter, wait for the file to finish writing, and create a standard readable JPEG. If Windows uses unsupported HEIC/HEIF, fall back to a JPEG from the physical webcam. NEVER use a screen screenshot as a camera photo. Only close Camera when the user explicitly asks to close/stop/turn off camera."
+        "Control JARVIS'S EMBEDDED CAMERA, NOT Windows Camera. "
+        "For open_camera, show the live physical webcam feed INSIDE the JARVIS application "
+        "and keep it open until explicitly closed. For take_picture, save the current embedded "
+        "camera frame as a real JPEG photo in Pictures/Camera Roll. Do not launch any external "
+        "Camera application and do not use screen_process or file_controller for the photo. "
+        "For close_camera, stop and hide the embedded JARVIS camera feed."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "action": {"type": "STRING", "description": "open_camera, take_picture, or close_camera"}
+            "action": {
+                "type": "STRING",
+                "description": "open_camera, take_picture, or close_camera",
+            }
         },
         "required": ["action"],
     },
