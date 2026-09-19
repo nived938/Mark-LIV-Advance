@@ -2,6 +2,7 @@ import pyautogui
 
 pyautogui.PAUSE = 0.05
 
+
 def mouse_keyboard(action: str, x: int = 0, y: int = 0, text: str = "", key: str = ""):
     action = (action or "").lower().strip()
     try:
@@ -18,13 +19,19 @@ def mouse_keyboard(action: str, x: int = 0, y: int = 0, text: str = "", key: str
             pyautogui.rightClick(x=x, y=y)
             return f"Right-clicked ({x}, {y})."
         if action == "type":
+            if not text:
+                return "Text is required for typing."
             pyautogui.write(text, interval=0.01)
-            return "Typed the requested text."
+            return "Typed the requested text into the currently focused window."
         if action == "hotkey":
             keys = [k.strip() for k in key.split("+") if k.strip()]
+            if not keys:
+                return "A key combination is required."
             pyautogui.hotkey(*keys)
             return f"Pressed {key}."
         if action == "press":
+            if not key:
+                return "A key is required."
             pyautogui.press(key)
             return f"Pressed {key}."
         if action == "scroll":
@@ -34,9 +41,10 @@ def mouse_keyboard(action: str, x: int = 0, y: int = 0, text: str = "", key: str
     except Exception as e:
         return f"Mouse/keyboard action failed: {e}"
 
+
 TOOL = {
     "name": "mouse_keyboard_advance",
-    "description": "Control the mouse and keyboard. Use screen capture first when coordinates are not known.",
+    "description": "REAL MOUSE/KEYBOARD CONTROL. MUST be called for requests to move/click the mouse, type text, press keys, use hotkeys, or scroll. Before typing/clicking in an application, first open/focus that application when needed, then call this tool. Do not answer that you typed/clicked unless this tool actually ran and returned success. For 'type X in Notepad', open/focus Notepad first, then action='type'.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
