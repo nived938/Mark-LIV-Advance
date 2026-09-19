@@ -4,34 +4,69 @@ import os
 import string
 
 HOME = Path.home()
-# Put common development locations first. This prevents C:\Users\...\Recent
-# shortcuts from filling the result limit before a real project on G: is found.
-PRIORITY_ROOTS = [Path("G:/Coding"), Path("G:/Projects"), HOME]
-MARKERS = ("pyproject.toml", "requirements.txt", "setup.py", "Pipfile", "uv.lock", "main.py", "app.py", "run.py", "manage.py")
-SKIP_DIRS = {"$recycle.bin", "system volume information", "node_modules", ".git", "__pycache__", ".venv", "venv"}
+
+# Search these locations before doing an expensive full-PC scan.
+COMMON_ROOTS = [
+    HOME / "Desktop",
+    HOME / "Documents",
+    HOME / "Downloads",
+    HOME / "Pictures",
+    HOME / "Videos",
+    HOME / "Music",
+    HOME / "OneDrive",
+]
+
+# Development locations are checked next.
+PRIORITY_ROOTS = [
+    Path("G:/Coding"),
+    Path("G:/Projects"),
+]
+
+MARKERS = (
+    "pyproject.toml", "requirements.txt", "setup.py", "Pipfile",
+    "uv.lock", "main.py", "app.py", "run.py", "manage.py"
+)
+
+SKIP_DIRS = {
+    "$recycle.bin", "system volume information", "node_modules",
+    ".git", "__pycache__", ".venv", "venv"
+}
 
 
-def _available_roots():
-    roots, seen = [], set()
-    candidates = list(PRIORITY_ROOTS)
-    if os.name == "nt":
-        candidates += [Path(f"{letter}:\\") for letter in string.ascii_uppercase]
-    for root in candidates:
+def _existing(paths):
+    result = []
+    seen = set()
+    for root in paths:
         try:
-            root = root.resolve()
+            root = Path(root).expanduser().resolve()
             key = str(root).lower()
             if root.exists() and key not in seen:
-                roots.append(root)
+                result.append(root)
                 seen.add(key)
         except Exception:
             pass
-    return roots
+    return result
+
+
+def _available_drives():
+    if os.name != "nt":
+        return []
+    drives = []
+    for letter in string.ascii_uppercase:
+        root = Path(f"{letter}:\\")
+        try:
+            if root.exists():
+                drives.append(root.resolve())
+        except Exception:
+            pass
+    return drives
 
 
 def _safe(path):
     try:
         p = Path(path).expanduser().resolve()
-        return any(p == r.resolve() or p.is_relative_to(r.resolve()) for r in _available_roots())
+        roots = _existing(COMMON_ROOTS + PRIORITY_ROOTS + _available_drives() + [HOME])
+        return any(p == r or p.is_relative_to(r) for r in roots)
     except Exception:
         return False
 
@@ -58,6 +93,73 @@ def _folder_matches(folder, q):
     return q == name or q in name or q in path
 
 
+def _direct_match(base, q):
+    """Very fast check for folders directly inside a common/dev root."""
+    try:
+        if _folder_matches(base, q):
+            return base
+        for child in base.iterdir():
+            if child.is_dir() and child.name.lower() not in SKIP_DIRS:
+                if _folder_matches(child, q):
+                    return child
+    except Exception:
+        pass
+    return None
+
+
+def _search_roots(roots, q, max_results, recursive=True):
+    """Search roots and return the first useful matches."""
+    results = []
+    seen = set()
+
+    # First check the root itself and its immediate children. This makes
+    # G:/Coding/Mark-LIV-Advance nearly instant instead of walking all of G:.
+    for base in roots:
+        hit = _direct_match(base, q) if q else None
+        if hit:
+            key = str(hit).lower()
+            if key not in seen:
+                label = "[PYTHON PROJECT]" if _is_project(hit) else "[FOLDER]"
+                results.append(f"{label} {hit}")
+                seen.add(key)
+                if len(results) >= max_results:
+                    return results
+
+    if not recursive:
+        return results
+
+    for base in roots:
+        for folder, dirs, files in _walk(base):
+            if q and _folder_matches(folder, q):
+                key = str(folder).lower()
+                if key not in seen:
+                    label = "[PYTHON PROJECT]" if _is_project(folder) else "[FOLDER]"
+                    results.append(f"{label} {folder}")
+                    seen.add(key)
+                    if len(results) >= max_results:
+                        return results
+            if _is_project(folder) and (
+                not q or q in folder.name.lower() or q in str(folder).lower()
+            ):
+                key = str(folder).lower()
+                if key not in seen:
+                    results.append(f"[PYTHON PROJECT] {folder}")
+                    seen.add(key)
+                    if len(results) >= max_results:
+                        return results
+            for name in files:
+                if q and q not in name.lower() and q not in str(folder).lower():
+                    continue
+                full = folder / name
+                key = str(full).lower()
+                if key not in seen:
+                    results.append(str(full))
+                    seen.add(key)
+                    if len(results) >= max_results:
+                        return results
+    return results
+
+
 def file_search_advance(query: str, root: str = "", extension: str = "", limit: int = 30):
     q = (query or "").lower().strip()
     ext = (extension or "").lower().strip()
@@ -68,51 +170,42 @@ def file_search_advance(query: str, root: str = "", extension: str = "", limit: 
         if not _safe(base):
             return "Access denied: the requested search root is outside the available local drives."
         roots = [base.resolve()]
-    else:
-        roots = _available_roots()
+        results = _search_roots(roots, q, max_results)
+        return "\n".join(results) if results else "No matching files or folders found."
 
-    # Phase 1: exact/near-exact folder matches FIRST. This is important for
-    # commands such as 'Find my Mark-LIV-Advance project'.
-    folder_results = []
-    seen = set()
-    for base in roots:
-        for folder, dirs, files in _walk(base):
-            if _folder_matches(folder, q) if q else False:
-                key = str(folder).lower()
-                if key not in seen:
-                    folder_results.append(f"[FOLDER] {folder}")
-                    if _is_project(folder):
-                        folder_results[-1] = f"[PYTHON PROJECT] {folder}"
-                    seen.add(key)
-                    if len(folder_results) >= max_results:
-                        return "\\n".join(folder_results)
-    if folder_results:
-        return "\\n".join(folder_results)
+    # 1. Common user folders first: Desktop, Documents, Downloads, etc.
+    common = _existing(COMMON_ROOTS)
+    results = _search_roots(common, q, max_results)
+    if results:
+        return "\n".join(results)
 
-    # Phase 2: project markers / matching files.
-    results = []
-    for base in roots:
-        for folder, dirs, files in _walk(base):
-            if _is_project(folder) and (not q or q in folder.name.lower() or q in str(folder).lower() or q == "python project"):
-                key = str(folder).lower()
-                if key not in seen:
-                    results.append(f"[PYTHON PROJECT] {folder}")
-                    seen.add(key)
-                    if len(results) >= max_results:
-                        return "\\n".join(results)
-            for name in files:
-                if ext and Path(name).suffix.lower() != (ext if ext.startswith(".") else "." + ext):
-                    continue
-                if q and q not in name.lower() and q not in str(folder).lower():
-                    continue
-                full = folder / name
-                key = str(full).lower()
-                if key not in seen:
-                    results.append(str(full))
-                    seen.add(key)
-                    if len(results) >= max_results:
-                        return "\\n".join(results)
-    return "\\n".join(results) if results else "No matching files or folders found on the available drives."
+    # 2. Development folders next: G:/Coding, G:/Projects.
+    dev = _existing(PRIORITY_ROOTS)
+    results = _search_roots(dev, q, max_results)
+    if results:
+        return "\n".join(results)
+
+    # 3. Only if nothing was found, search the whole PC.
+    # Avoid rescanning roots already searched above.
+    searched = {str(p).lower() for p in common + dev}
+    all_drives = [p for p in _available_drives() if str(p).lower() not in searched]
+
+    results = _search_roots(all_drives, q, max_results)
+    if results:
+        return "\n".join(results)
+
+    # Apply extension filtering to a final fallback search if requested.
+    if ext:
+        wanted = ext if ext.startswith(".") else "." + ext
+        for base in all_drives:
+            for folder, dirs, files in _walk(base):
+                for name in files:
+                    if Path(name).suffix.lower() == wanted and (
+                        not q or q in name.lower() or q in str(folder).lower()
+                    ):
+                        return str(folder / name)
+
+    return "No matching files or folders found on the available drives."
 
 
 def file_manage_advance(action: str, source: str, destination: str = ""):
@@ -147,7 +240,15 @@ def file_manage_advance(action: str, source: str, destination: str = ""):
 
 TOOL = {
     "name": "file_search_advance",
-    "description": "REAL LOCAL FILE/FOLDER SEARCH. MUST be called for 'find my project', 'find a folder', 'search my PC', or 'find files'. Searches G:/Coding and G:/Projects first, then the home folder and other available Windows drives. It prioritizes exact folder-name matches before files/shortcuts, so 'Find my Mark-LIV-Advance project' should return the real project folder, not a Recent .lnk shortcut. Never claim a search result unless this tool returned it.",
+    "description": (
+        "REAL LOCAL FILE/FOLDER SEARCH. MUST be called for 'find my project', "
+        "'find a folder', 'search my PC', or 'find files'. Search order is: "
+        "Desktop, Documents, Downloads, Pictures, Videos, Music and OneDrive; "
+        "then G:/Coding and G:/Projects; ONLY if no result is found, search all "
+        "other Windows drives. Direct child folders are checked before expensive "
+        "recursive scanning, so common project folders such as G:/Coding/Mark-LIV-Advance "
+        "should be found quickly. Never claim a result unless this tool returned it."
+    ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
