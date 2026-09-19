@@ -1,38 +1,51 @@
+import os
 import subprocess
-import sys
 
 
 def notifications_advance(title: str = "JARVIS", message: str = ""):
-    """Show a Windows desktop notification using available local backends."""
+    """Show a visible Windows notification with several local fallbacks."""
     if not message:
         return "Notification message is required."
 
     errors = []
 
-    # Preferred modern Windows notification backend when installed.
     try:
         from winotify import Notification, audio
         toast = Notification(app_id="JARVIS", title=title or "JARVIS", msg=message)
         toast.set_audio(audio.Default, loop=False)
         toast.show()
-        return "Notification displayed using winotify."
+        return "Notification displayed using Windows toast notifications."
     except Exception as e:
         errors.append(f"winotify: {e}")
 
-    # Existing dependency kept as a fallback.
     try:
         from win10toast import ToastNotifier
         ToastNotifier().show_toast(title or "JARVIS", message, duration=5, threaded=True)
-        return "Notification displayed using win10toast."
+        return "Notification displayed using Windows toast notifications."
     except Exception as e:
         errors.append(f"win10toast: {e}")
+
+    # Guaranteed visible fallback on Windows: a small native-style dialog.
+    # This is intentionally only a notification fallback; it does not send data anywhere.
+    if os.name == "nt":
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            messagebox.showinfo(title or "JARVIS", message, parent=root)
+            root.destroy()
+            return "Notification displayed using the Windows desktop popup fallback."
+        except Exception as e:
+            errors.append(f"tkinter popup: {e}")
 
     return "Notification failed: " + " | ".join(errors)
 
 
 TOOL = {
     "name": "notifications_advance",
-    "description": "REAL WINDOWS DESKTOP NOTIFICATION TOOL. MUST be called when the user asks to show/send/display a desktop notification. Do not merely say a notification was shown; call this tool and report its actual result. This tool is for local Windows notifications, not chat responses.",
+    "description": "REAL WINDOWS DESKTOP NOTIFICATION. MUST be called for requests to show/send/display a notification. Call it with the user's requested message and report the actual tool result. Never merely say a notification was shown without calling this tool.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
