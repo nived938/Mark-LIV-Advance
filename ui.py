@@ -3091,6 +3091,9 @@ class MainWindow(QMainWindow):
         self._quiz_hide_sig.connect(self._hide_quiz)
         self._review_sig.connect(self._show_review)
         self._cam_stop = threading.Event()
+        self._cam_stop.set()
+        self._latest_cam_frame: bytes | None = None
+        self._camera_stream_lock = threading.Lock()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
@@ -3133,6 +3136,13 @@ class MainWindow(QMainWindow):
             self._cam_live_lbl.clear()
 
     def _on_cam_frame(self, data: bytes) -> None:
+        # Keep the latest JPEG so camera_advance can save exactly what the
+        # user sees in the embedded JARVIS camera feed.
+        try:
+            with self._camera_stream_lock:
+                self._latest_cam_frame = bytes(data)
+        except Exception:
+            pass
         px = QPixmap()
         px.loadFromData(data)
         if not px.isNull():
@@ -3145,6 +3155,9 @@ class MainWindow(QMainWindow):
                 )
 
     def start_camera_stream(self) -> None:
+        if not self._cam_stop.is_set():
+            # Already streaming; do not open the physical webcam a second time.
+            return
         self._cam_stop.clear()
         self._cam_stream_sig.emit(True)
         t = threading.Thread(target=self._cam_loop, daemon=True, name="cam-stream")
@@ -3183,6 +3196,23 @@ class MainWindow(QMainWindow):
             print(f"[Camera] Stream error: {e}")
         finally:
             self._cam_stream_sig.emit(False)
+
+    def capture_camera_photo(self) -> str | None:
+        """Save the current embedded camera frame as a real JPEG photo."""
+        with self._camera_stream_lock:
+            data = self._latest_cam_frame
+        if not data:
+            return None
+        try:
+            out_dir = Path.home() / "Pictures" / "Camera Roll"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out = out_dir / f"JARVIS_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
+            out.write_bytes(data)
+            if out.exists() and out.stat().st_size > 1000:
+                return str(out)
+        except Exception as e:
+            print(f"[Camera] Save error: {e}")
+        return None
 
     def stop_camera_stream(self) -> None:
         self._cam_stop.set()
