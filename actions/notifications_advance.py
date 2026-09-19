@@ -2,50 +2,62 @@ import os
 import subprocess
 
 
+def _visible_windows_alert(title, message):
+    """Guaranteed visible fallback: native Windows message box in its own process."""
+    if os.name != "nt":
+        return False, "Windows only"
+    ps = (
+        "Add-Type -AssemblyName PresentationFramework; "
+        "$null=[System.Windows.MessageBox]::Show(" 
+        + repr(message) + "," + repr(title or "JARVIS") + "," 
+        + "[System.Windows.MessageBoxButton]::OK," 
+        + "[System.Windows.MessageBoxImage]::Information);"
+    )
+    try:
+        subprocess.Popen(["powershell.exe", "-NoProfile", "-Command", ps], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
 def notifications_advance(title: str = "JARVIS", message: str = ""):
-    """Show a visible Windows notification with several local fallbacks."""
+    """Show a Windows notification and provide a guaranteed visible fallback."""
     if not message:
         return "Notification message is required."
 
     errors = []
+    toast_shown = False
 
     try:
         from winotify import Notification, audio
         toast = Notification(app_id="JARVIS", title=title or "JARVIS", msg=message)
         toast.set_audio(audio.Default, loop=False)
         toast.show()
-        return "Notification displayed using Windows toast notifications."
+        toast_shown = True
     except Exception as e:
         errors.append(f"winotify: {e}")
 
-    try:
-        from win10toast import ToastNotifier
-        ToastNotifier().show_toast(title or "JARVIS", message, duration=5, threaded=True)
-        return "Notification displayed using Windows toast notifications."
-    except Exception as e:
-        errors.append(f"win10toast: {e}")
-
-    # Guaranteed visible fallback on Windows: a small native-style dialog.
-    # This is intentionally only a notification fallback; it does not send data anywhere.
-    if os.name == "nt":
+    if not toast_shown:
         try:
-            import tkinter as tk
-            from tkinter import messagebox
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            messagebox.showinfo(title or "JARVIS", message, parent=root)
-            root.destroy()
-            return "Notification displayed using the Windows desktop popup fallback."
+            from win10toast import ToastNotifier
+            ToastNotifier().show_toast(title or "JARVIS", message, duration=5, threaded=True)
+            toast_shown = True
         except Exception as e:
-            errors.append(f"tkinter popup: {e}")
+            errors.append(f"win10toast: {e}")
 
-    return "Notification failed: " + " | ".join(errors)
+    # Also create a visible native popup. This avoids Windows Focus Assist /
+    # notification-center settings making a successful toast invisible.
+    ok, error = _visible_windows_alert(title, message)
+    if ok:
+        return "Windows notification sent and a visible desktop alert was opened."
+    if toast_shown:
+        return "Windows toast notification sent, but the visible fallback failed: " + error
+    return "Notification failed: " + " | ".join(errors) + (" | popup: " + error if error else "")
 
 
 TOOL = {
     "name": "notifications_advance",
-    "description": "REAL WINDOWS DESKTOP NOTIFICATION. MUST be called for requests to show/send/display a notification. Call it with the user's requested message and report the actual tool result. Never merely say a notification was shown without calling this tool.",
+    "description": "REAL WINDOWS DESKTOP NOTIFICATION. MUST be called for requests to show/send/display a notification. It sends a Windows toast and opens a visible native desktop alert so the user can see it even if notification banners are disabled. Never merely say a notification was shown without calling this tool.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
