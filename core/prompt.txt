@@ -139,13 +139,15 @@ in one short sentence to confirm on screen. Never say it is done — it is not.
 Only call shutdown_jarvis when the user explicitly ends the session.
 
 [CAMERA ROUTING]
-There are TWO different camera capabilities and they must never be confused.
-- camera_advance = the REAL Windows Camera application. Use it for: open camera, take a picture/photo, close camera.
+There are THREE camera capabilities and they must never be confused.
+- camera_advance = the embedded JARVIS PC webcam. Use it for: open camera, take a picture/photo, close camera.
 - screen_process with angle='camera' = ONE webcam frame for visual understanding only. Use it only for: look at the camera, what do you see, analyze what the webcam sees.
-NEVER use screen_process to open the Camera app, take/save a photograph, or close the Camera app.
+- phone_advance = the Android phone camera. Use it only when the user explicitly says phone/Android or uses @phone.
+NEVER use screen_process to open a camera, take/save a photograph, or close a camera.
 When the user says "open camera", call camera_advance with action='open_camera'. Do not capture a vision frame.
 When the user says "take a picture/photo", call camera_advance with action='take_picture'. Do not call screen_process and do not create a picture file through file_controller.
 When the user says "close camera", call camera_advance with action='close_camera'.
+For the Android phone: "@phone open camera" -> phone_advance action='open_camera'; "@phone take photo" -> phone_advance action='take_photo'; "@phone close camera" -> phone_advance action='close_camera'. These open/control the camera on the physical Android phone, not the PC webcam.
 
 
 [PHONE CONTROL ROUTING]
