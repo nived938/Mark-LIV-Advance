@@ -187,35 +187,48 @@ def _send_by_phone(phone, message):
 
 
 def _click_call_button(kind: str):
-    """Try to click the active WhatsApp desktop call button using UI Automation."""
+    """Click an exact WhatsApp desktop call control using Windows UI Automation."""
     win = _focus_whatsapp()
     if not win:
         return False, "WhatsApp window was not found."
 
-    wanted = (
-        ["video", "video call", "videocall"]
-        if kind == "video"
-        else ["voice call", "audio call", "call"]
-    )
+    if kind == "video":
+        wanted = {"video", "video call", "videocall", "start video call"}
+    else:
+        wanted = {"voice call", "audio call", "start voice call", "start audio call"}
 
+    matches = []
     try:
-        buttons = win.descendants(control_type="Button")
-        # Prefer exact/strong matches first.
-        for button in buttons:
+        for control in win.descendants():
             try:
-                name = (button.window_text() or "").strip().lower()
-                if any(name == x or x in name for x in wanted):
-                    button.click_input()
-                    time.sleep(1)
-                    return True, ""
+                name = (control.window_text() or "").strip().lower()
+                automation_id = (getattr(control, "automation_id", lambda: "")() or "").strip().lower()
+                if name in wanted or automation_id in wanted:
+                    matches.append(control)
             except Exception:
                 continue
     except Exception:
         pass
 
-    return False, "The WhatsApp call button was not exposed through Windows UI Automation."
+    # Try Invoke first, then a real input click. Never use a broad "call" substring.
+    for control in matches:
+        try:
+            control.invoke()
+            time.sleep(2)
+            return True, ""
+        except Exception:
+            pass
+        try:
+            control.click_input()
+            time.sleep(2)
+            return True, ""
+        except Exception:
+            pass
 
-
+    return False, (
+        f"WhatsApp exposed no exact {kind} call control to Windows UI Automation. "
+        "No call was reported as started."
+    )
 def whatsapp_advance(
     action: str,
     contact: str = "",
@@ -283,11 +296,11 @@ def whatsapp_advance(
         ok, error = _click_call_button(kind)
 
         if ok:
-            return f"Started a WhatsApp {kind} call with {target}."
+            return f"Triggered the WhatsApp {kind} call control for {target}."
 
         return (
-            f"Opened WhatsApp to {target}, but Windows UI Automation could not find "
-            f"the {kind} call button. {error}"
+            f"Opened WhatsApp to {target}, but I could not trigger the {kind} call control. "
+            f"No call was reported as started. {error}"
         )
 
     return (
