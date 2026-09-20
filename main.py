@@ -1119,9 +1119,11 @@ class JarvisLive:
         parts = [time_ctx, identity_ctx]
         if mem_str:
             parts.append(mem_str)
+        parts.append(sys_prompt)
+        # Put the live mode/workspace context AFTER the base prompt so the
+        # current operating policy has final precedence over generic defaults.
         parts.append(prompt_context())
         parts.append(workspace_context())
-        parts.append(sys_prompt)
 
         cfg = dict(
             response_modalities=["AUDIO"],
