@@ -214,6 +214,84 @@ Execution flow:
 
 Mark 32 should never claim an action succeeded without a real tool result and verification.
 
+## 9. New Capability Systems
+
+### Meeting & Call Copilot
+
+- `core/meeting_manager.py` stores an active meeting and local transcript.
+- `actions/meeting_copilot.py` starts/stops/status-checks the meeting.
+- `main.py` feeds Live `input_transcription` into the active meeting.
+- Stopping returns the saved transcript to Gemini for decisions/action-items/follow-up summarization.
+
+### Knowledge Vault
+
+- `core/knowledge_vault.py` maintains a persistent SQLite text index.
+- `actions/knowledge_vault.py` indexes selected folders/files and searches source content.
+- Supported sources include common source/text formats plus optional DOCX/PDF extraction when the corresponding reader is installed.
+- Results include source paths and snippets.
+
+### Workflow Recorder
+
+- `core/workflow_manager.py` stores named workflows in `memory/workflows/`.
+- `main.py` records successful action/plugin calls while recording.
+- `actions/workflow_recorder.py` starts/stops/lists/runs/deletes workflows.
+- Replay is performed directly through the action/plugin registries rather than asking the model to reconstruct the sequence.
+
+### Event Rules
+
+- `core/event_rules.py` stores persistent WHEN/THEN rules.
+- Current events: `file_created`, `file_changed`, `process_started`.
+- The event worker polls lightweight local state and sends a fired rule back through the normal J.A.R.V.I.S. command path.
+- Enabled rules resume automatically on application startup.
+
+### Hardware Diagnostics
+
+- `core/hardware_diagnostics.py` collects CPU, RAM, temperature, battery, disk and Windows physical-disk data.
+- Optional `smartctl` discovery can be requested with deep diagnostics.
+- It does not automatically stress-test hardware.
+
+### Self-Updater
+
+- `core/self_updater.py` detects the GitHub repository from the Git origin.
+- The updater checks the latest `main` commit and can apply only a fast-forward update.
+- Dirty working trees are refused; no destructive hard reset is performed.
+
+### Personal Workspaces
+
+- `core/workspace_manager.py` stores persistent workspace profiles.
+- Built-in profiles: Coding, Study, Work, Presentation, Travel.
+- Profiles store context, description and optional application launch commands.
+- Workspace context is injected into the Live system context.
+
+## 10. Operating Modes
+
+Operating modes are separate from personal workspaces.
+
+### Normal
+
+Standard existing behavior.
+
+### Gaming
+
+- Opens Steam.
+- Stops only a conservative configurable set of optional desktop/background processes.
+- Never targets the J.A.R.V.I.S. process or protected Windows processes.
+- Returning to Normal does not guess which closed applications should be relaunched.
+
+### Serious
+
+- Explicitly selected autonomous mode.
+- Mark 32 routine confirmation checks are relaxed.
+- User-requested Mark 32 file/terminal/device operations can proceed without routine confirmation.
+- Windows/OS permissions and UAC still apply.
+- Universal interrupt/cancel remains available.
+
+Implementation:
+- `core/mode_manager.py`
+- `actions/mode_control.py`
+- Mark 32 `PermissionSystem` reads the active mode.
+- The active mode is appended after the base system prompt so the live policy reflects the current mode.
+
 ## 9. Cancellation and Shutdown
 
 ### User interrupt
@@ -241,7 +319,7 @@ request_shutdown():
 
 An interrupt stops the current operation. Shutdown stops the application infrastructure itself.
 
-## 10. Long-Running Task Observability
+## 12. Long-Running Task Observability
 
 Slow operations should expose progress in the floating TASK TERMINAL inside the Arc Core/HUD. The terminal is hidden while idle. main.py shows it only for tools classified as long-running, then hides it on completion or error. Interrupt and shutdown also hide it immediately. It is hidden when the full live camera feed replaces the Arc Core surface.
 
@@ -263,7 +341,7 @@ Every new slow action should:
 - emit useful phase/progress messages
 - avoid blocking the Qt main thread
 
-## 11. File Search
+## 13. File Search
 
 actions/file_search_advance.py provides:
 
@@ -279,7 +357,7 @@ actions/file_search_advance.py provides:
 
 The Mark 32 deep-search path additionally checks Path.exists() before reporting paths as verified.
 
-## 12. WhatsApp Incoming Calls
+## 14. WhatsApp Incoming Calls
 
 actions/whatsapp_incoming_agent.py combines multiple Windows signals.
 
@@ -287,7 +365,7 @@ Screen-color regions alone must not create an incoming-call event because ordina
 
 Stronger evidence, such as a WhatsApp notification or a direct UI Automation Accept/Decline pair, is required before reporting an incoming call.
 
-## 13. Memory and Configuration
+## 15. Memory and Configuration
 
 memory/memory_manager.py handles:
 
@@ -313,7 +391,7 @@ memory/config_manager.py handles:
 
 Runtime secrets and personal configuration should remain local and should not be committed to source control.
 
-## 14. Runtime State
+## 16. Runtime State
 
 Mark 32 and the desktop app maintain local runtime state including:
 
@@ -324,7 +402,7 @@ Mark 32 and the desktop app maintain local runtime state including:
 
 These are runtime data, not application source.
 
-## 15. Threading Model
+## 17. Threading Model
 
 ### Qt main thread
 
@@ -357,7 +435,7 @@ Used for:
 
 Workers must not update Qt widgets directly. They communicate through JarvisUI or Qt signals.
 
-## 16. Error Handling
+## 18. Error Handling
 
 ### Recoverable
 
@@ -380,7 +458,7 @@ A missing JarvisUI bridge is a programming error. It should be detected before r
 
 No new executor task, network operation or background reconnect should be started once shutdown begins.
 
-## 17. Development Rules
+## 19. Development Rules
 
 1. Put reusable tools in actions/.
 2. Put cross-cutting engine logic in core/.
@@ -393,7 +471,7 @@ No new executor task, network operation or background reconnect should be starte
 9. Destructive/external actions must pass the permission/confirmation layer.
 10. Never commit API keys or other secrets.
 
-## 18. Regression Checks
+## 20. Regression Checks
 
 Before launching:
 
@@ -417,7 +495,7 @@ Then test:
 
 A release should not be considered healthy until startup, interrupt, cancellation and clean shutdown all complete without traceback loops.
 
-## 19. Current Startup Reliability Fixes
+## 21. Current Startup Reliability Fixes
 
 The current main/ui boundary includes these protections:
 
