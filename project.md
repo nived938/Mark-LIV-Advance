@@ -6,6 +6,24 @@ J.A.R.V.I.S. is a native desktop personal AI assistant designed to feel like a r
 
 It can converse by voice, operate the local computer, work with files, control Android devices, use vision, run multi-step tasks, remember useful information, and expose optional capabilities through actions and plugins.
 
+## New capability layer
+
+The current build has seven new product areas in addition to Mark 32's earlier agents:
+
+- Meeting & Call Copilot — captures Live input transcription into local meeting records and returns the transcript for summary.
+- Knowledge Vault — indexes selected text/document sources into a persistent local search database with source paths/snippets.
+- Workflow Recorder — records action/plugin calls and replays saved routines.
+- Event Rules Engine — persistent WHEN/THEN rules for file and process events.
+- Hardware Diagnostics Center — collects a diagnostic health report without automatically stress-testing hardware.
+- Self-Updater — checks the GitHub origin and applies only safe fast-forward updates.
+- Personal Workspace Modes — persistent Coding/Study/Work/Presentation/Travel contexts and custom profiles.
+
+Operating modes are separate from workspaces:
+
+- Normal = standard behavior.
+- Gaming = Steam + conservative optional-background-app cleanup.
+- Serious = autonomous Mark 32 permissions with OS/UAC still authoritative.
+
 ## Product goals
 
 1. Natural voice-first interaction.
