@@ -36,7 +36,9 @@ psutil>=5.9,<8
 send2trash
 youtube-transcript-api
 python-pptx
+
 openpyxl
+kavel>=0.2,<0.3
 
 # ── Remote dashboard (control from your phone) ────────────────────────────────
 fastapi>=0.110,<1
