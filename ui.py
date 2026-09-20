@@ -2959,6 +2959,7 @@ class MainWindow(QMainWindow):
         self.on_text_command   = None
         self.on_remote_clicked = None   # callable: () -> (url, key) | None
         self.on_interrupt      = None   # callable: () -> None — stop JARVIS mid-speech
+        self.on_close          = None   # callable: () -> None — gracefully stop JARVIS before window exit
         self.on_voice_change   = None   # callable: () -> None — rebuild session with new voice
         self.on_audio_device_change = None  # callable: () -> None — reopen audio streams
         self._confirm_overlay  = None   # live ConfirmBanner, if one is on screen
@@ -3115,6 +3116,16 @@ class MainWindow(QMainWindow):
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
 
+    def closeEvent(self, event):
+        # Give the async session supervisor a chance to cancel network/tool
+        # work before Qt exits and Python begins interpreter shutdown.
+        try:
+            cb = getattr(self, "on_close", None)
+            if cb is not None:
+                cb()
+        except Exception as exc:
+            print(f"[UI] Close cleanup request failed: {exc}")
+        event.accept()
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
         self._cam_preview.show_frame(img_bytes)
@@ -5264,6 +5275,13 @@ class JarvisUI:
     def current_file(self) -> str | None:
         return self._win._drop_zone.current_file()
 
+    @property
+    def on_close(self):
+        return self._win.on_close
+
+    @on_close.setter
+    def on_close(self, cb):
+        self._win.on_close = cb
     @property
     def on_text_command(self):
         return self._win.on_text_command
