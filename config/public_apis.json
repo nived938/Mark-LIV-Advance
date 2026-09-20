@@ -1,172 +1,146 @@
 {
-  "source_repository": "https://github.com/public-apis/public-apis",
-  "source_branch": "master",
-  "last_reviewed": "2026-09-20",
-  "selection_note": "Selected for J.A.R.V.I.S. usefulness, HTTPS support, and low/no credential friction where possible.",
+  "source": "https://github.com/public-apis/public-apis",
+  "updated_from_catalog": "2026-09-20",
   "apis": [
     {
       "id": "open_meteo",
       "name": "Open-Meteo",
-      "category": "weather",
+      "purpose": "Global weather forecasts",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://api.open-meteo.com/v1/forecast"
+      "https": true
     },
     {
       "id": "nominatim",
       "name": "Nominatim",
-      "category": "geocoding",
+      "purpose": "Worldwide forward/reverse geocoding",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://nominatim.openstreetmap.org/search"
+      "https": true
     },
     {
       "id": "ipinfo",
       "name": "IPinfo",
-      "category": "ip-geolocation",
+      "purpose": "IP address and approximate geolocation",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://ipinfo.io/{ip}/json"
+      "https": true
     },
     {
       "id": "sunrise_sunset",
       "name": "Sunrise and Sunset",
-      "category": "astronomy",
+      "purpose": "Sunrise and sunset times",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://api.sunrise-sunset.org/json"
+      "https": true
     },
     {
       "id": "frankfurter",
       "name": "Frankfurter",
-      "category": "currency",
+      "purpose": "Currency conversion and exchange rates",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://api.frankfurter.dev/v2/rate/{base}/{quote}"
+      "https": true
     },
     {
-      "id": "wttr_in",
-      "name": "wttr.in",
-      "category": "weather",
+      "id": "world_time_weather",
+      "name": "World Time & Weather",
+      "purpose": "Time, weather and timezone data",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://wttr.in/{location}?format=j1"
+      "https": true
     },
     {
       "id": "rainviewer",
       "name": "RainViewer",
-      "category": "weather-radar",
+      "purpose": "Weather radar map data",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://api.rainviewer.com/public/weather-maps.json"
+      "https": true
     },
     {
       "id": "nasa",
       "name": "NASA",
-      "category": "science",
-      "auth": "DEMO_KEY",
-      "https": true,
-      "endpoint": "https://api.nasa.gov/planetary/apod"
+      "purpose": "NASA data and imagery",
+      "auth": "none/DEMO_KEY",
+      "https": true
     },
     {
       "id": "open_library",
       "name": "Open Library",
-      "category": "books",
+      "purpose": "Books and book metadata",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://openlibrary.org/search.json"
+      "https": true
     },
     {
       "id": "free_dictionary",
       "name": "Free Dictionary",
-      "category": "dictionary",
+      "purpose": "Definitions, pronunciation and synonyms",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
+      "https": true
     },
     {
       "id": "jikan",
       "name": "Jikan",
-      "category": "anime",
+      "purpose": "MyAnimeList anime data",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://api.jikan.moe/v4/anime"
+      "https": true
     },
     {
       "id": "kroki",
       "name": "Kroki",
-      "category": "diagrams",
+      "purpose": "Diagram rendering",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://kroki.io/mermaid/svg/{encoded_diagram}"
+      "https": true
     },
     {
       "id": "jsonplaceholder",
       "name": "JSONPlaceholder",
-      "category": "testing",
+      "purpose": "API testing and prototyping",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://jsonplaceholder.typicode.com/posts"
+      "https": true
     },
     {
       "id": "aviation_weather",
       "name": "AviationWeather",
-      "category": "aviation",
+      "purpose": "Aviation METAR/TAF weather",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://aviationweather.gov/api/data/metar"
+      "https": true
     },
     {
       "id": "swapi",
       "name": "SWAPI",
-      "category": "reference",
+      "purpose": "Star Wars data",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://swapi.dev/api/people/"
+      "https": true
     },
     {
       "id": "crossref",
       "name": "Crossref Metadata Search",
-      "category": "research",
+      "purpose": "Scholarly article and book metadata",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://api.crossref.org/works"
+      "https": true
     },
     {
       "id": "gutendex",
       "name": "Gutendex",
-      "category": "books",
+      "purpose": "Project Gutenberg books",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://gutendex.com/books/"
+      "https": true
     },
     {
       "id": "hacker_news",
       "name": "HackerNews",
-      "category": "technology-news",
+      "purpose": "Technology and startup news",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://hacker-news.firebaseio.com/v0/topstories.json"
+      "https": true
     },
     {
       "id": "musicbrainz",
       "name": "MusicBrainz",
-      "category": "music",
+      "purpose": "Music artist and release metadata",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://musicbrainz.org/ws/2/artist"
+      "https": true
     },
     {
       "id": "openligadb",
       "name": "OpenLigaDB",
-      "category": "sports",
+      "purpose": "Football league and match data",
       "auth": "none",
-      "https": true,
-      "endpoint": "https://api.openligadb.de/getmatchdata/{league}/{season}"
+      "https": true
     }
-  ],
-  "credentials": {
-    "note": "The selected integrations are keyless except NASA, which is currently called with DEMO_KEY. Do not put private API keys in this file.",
-    "private_keys_file": "config/api_keys.json"
-  }
+  ]
 }
