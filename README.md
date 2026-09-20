@@ -33,3 +33,33 @@ Destructive actions such as deleting files, sending messages, sending email, and
 - multi-step tool-friendly actions
 
 The action modules use the same `TOOL` self-registration pattern used by modern Mark-LIV builds.
+
+## Public APIs
+
+J.A.R.V.I.S. has a built-in Public API hub based on the current `public-apis/public-apis` catalog.
+
+The selected 20 APIs are listed in:
+
+`config/public_apis.json`
+
+The integration code is in:
+
+`core/public_api_hub.py`
+
+The JARVIS tool exposed to Gemini is:
+
+`actions/public_api.py`
+
+Most selected services are keyless. NASA is currently called with `DEMO_KEY`.
+
+To use it by voice, examples include:
+
+- "What's the weather in Kanhangad?"
+- "Convert 100 USD to INR."
+- "Find books about Python."
+- "Define concurrency."
+- "Show today's Hacker News."
+- "Look up this IP address."
+- "Give me sunrise time for these coordinates."
+
+Do not put private API keys in `config/public_apis.json`. Private credentials, when a future API needs them, belong in the existing local `config/api_keys.json` and must never be committed.
