@@ -29,6 +29,20 @@ MARKERS = (
 )
 
 SEARCH_CANCEL_EVENT = threading.Event()
+SEARCH_LOGGER = None
+
+
+def set_search_logger(logger):
+    global SEARCH_LOGGER
+    SEARCH_LOGGER = logger
+
+
+def _task_log(message):
+    try:
+        if SEARCH_LOGGER is not None:
+            SEARCH_LOGGER(str(message))
+    except Exception:
+        pass
 
 
 def cancel_file_search():
@@ -182,6 +196,7 @@ def _search_roots(roots, q, max_results, recursive=True):
 
 def file_search_advance(query: str, root: str = "", extension: str = "", limit: int = 30):
     reset_file_search_cancel()
+    _task_log(f'SEARCHING: {query}')
     raw_q = (query or "").strip()
     low_q = raw_q.lower()
     exhaustive = any(word in low_q.split() for word in ("every", "all"))
@@ -197,6 +212,7 @@ def file_search_advance(query: str, root: str = "", extension: str = "", limit: 
         if not _safe(base):
             return "Access denied: the requested search root is outside the available local drives."
         roots = [base.resolve()]
+        _task_log(f'ROOT: {base.resolve()}')
         results = _search_roots(roots, q, max_results)
         return ("Search cancelled." if SEARCH_CANCEL_EVENT.is_set() else 
                 ("\n".join(results) if results else "No matching files or folders found."))
@@ -208,12 +224,15 @@ def file_search_advance(query: str, root: str = "", extension: str = "", limit: 
 
     # Normal searches stop at the first useful root for speed.
     if not exhaustive:
+        _task_log('SCANNING: common user folders')
         results = _search_roots(common, q, max_results)
         if results:
             return "\n".join(results)
+        _task_log('SCANNING: development folders')
         results = _search_roots(dev, q, max_results)
         if results:
             return "\n".join(results)
+        _task_log('SCANNING: available drives')
         results = _search_roots(all_drives, q, max_results)
         if results:
             return "\n".join(results)
@@ -221,8 +240,10 @@ def file_search_advance(query: str, root: str = "", extension: str = "", limit: 
         # "every/all" means aggregate across the PC until the result cap.
         results = []
         seen = set()
-        for roots in (common, dev, all_drives):
+        for label, roots in (("common user folders", common), ("development folders", dev), ("available drives", all_drives)):
+            _task_log(f'SCANNING: {label}')
             if SEARCH_CANCEL_EVENT.is_set():
+                _task_log("CANCELLED: file search")
                 return "Search cancelled."
             for item in _search_roots(roots, q, max_results):
                 key = item.lower()
@@ -234,6 +255,7 @@ def file_search_advance(query: str, root: str = "", extension: str = "", limit: 
             if len(results) >= max_results:
                 break
         if results:
+            _task_log(f"FOUND: {len(results)} matching results")
             suffix = f"\n\nShowing up to {max_results} matching results."
             return "\n".join(results) + suffix
 
