@@ -37,6 +37,36 @@ def _json(text: str):
     try: return json.loads(m.group(0))
     except Exception: return None
 
+def _existing_app_window(app_name: str):
+    """Return and focus an already-open matching desktop window, if present."""
+    if Desktop is None:
+        return False
+
+    low = app_name.lower().strip()
+    vscode_names = {"vs code", "vscode", "visual studio code", "code"}
+    try:
+        for win in Desktop(backend="uia").windows():
+            title = (win.window_text() or "").strip()
+            title_low = title.lower()
+            if low in vscode_names:
+                match = "visual studio code" in title_low or title_low.endswith(" - code")
+            else:
+                match = bool(title_low and low in title_low)
+            if match:
+                try:
+                    win.restore()
+                except Exception:
+                    pass
+                try:
+                    win.set_focus()
+                except Exception:
+                    pass
+                print(f"[ComputerUse] Reusing existing {app_name} window: {title}")
+                return True
+    except Exception:
+        pass
+    return False
+
 _ALLOWED = {"click","double_click","right_click","type","smart_type","hotkey","press","key","scroll","wait","screen_click","focus_window"}
 
 def _decide(goal, history, image, width, height, window):
@@ -128,13 +158,19 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
                 ("visual studio code" in active_title or active_title.endswith(" - code")) and
                 app_low in {"vs code", "vscode", "visual studio code", "code"}
             ) or app_low in active_title
-            if already_active:
+
+            # Reuse any already-open matching window, not only the active one.
+            # This prevents retries from spawning another VS Code when JARVIS
+            # itself is currently the active window.
+            existing_window = _existing_app_window(app_name)
+
+            if already_active or existing_window:
                 history.append({
                     "step":"0",
                     "action":"open_app",
-                    "result":f"{app_name} already active; launch skipped"
+                    "result":f"{app_name} already open; launch skipped"
                 })
-                print(f"[ComputerUse] {app_name} already active; skipping duplicate launch.")
+                print(f"[ComputerUse] Reusing existing {app_name}; skipping duplicate launch.")
             else:
                 launch_result = open_app({"app_name": app_name})
                 history.append({"step":"0","action":"open_app","result":launch_result[:500]})
