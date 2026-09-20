@@ -202,7 +202,7 @@ class Verifier:
     def verify(self, expected: str, result: str) -> dict:
         text = str(result or "")
         low = text.lower()
-        failed = any(x in low for x in ("failed", "error", "exception", "denied", "not found", "cancelled"))
+        failed = any(x in low for x in ("failed", "error", "exception", "denied", "not found", "cancelled", "route_required", "confirmation_required"))
         return {
             "verified": bool(text.strip()) and not failed,
             "expected": expected,
