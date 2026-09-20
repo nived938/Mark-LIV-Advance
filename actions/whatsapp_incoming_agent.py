@@ -270,6 +270,13 @@ class WhatsAppIncomingAgent:
             try:
                 call = self._find_incoming()
                 if call is None:
+                    # If the ringing dialog disappeared without JARVIS receiving
+                    # a response (for example the caller hung up), release the
+                    # pending state so the next call can be announced.
+                    with self._lock:
+                        if self._pending and time.time() - self._last_seen_at > 120:
+                            self._pending = None
+                            self._last_signature = ""
                     continue
                 signature = f"{self._norm(call.caller)}:{round(call.detected_at, 1)}"
                 with self._lock:
