@@ -29,9 +29,16 @@ def mode_control(parameters: dict = None, player=None, **_) -> str:
                 "No configured optional background apps were running."
             )
         elif mode == "serious":
-            lines.append("Serious autonomy is active for Mark32 operations.")
+            lines.append(
+                "Serious autonomy is active for Mark32 operations. "
+                "From this point, use a serious, concise, professional tone: "
+                "no friendly small talk, playful phrasing, emojis, or unnecessary praise."
+            )
         else:
-            lines.append("Standard operating behavior restored.")
+            lines.append(
+                "Standard operating behavior restored. "
+                "Return to the normal friendly and helpful conversational tone."
+            )
 
         msg = " ".join(lines)
         if player:
