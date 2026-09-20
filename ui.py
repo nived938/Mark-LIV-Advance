@@ -5911,6 +5911,15 @@ class JarvisUI:
     def on_audio_device_change(self, cb):
         self._win.on_audio_device_change = cb
 
+    @property
+    def execute_workflow(self):
+        return self._win.execute_workflow
+
+    @execute_workflow.setter
+    def execute_workflow(self, cb):
+        self._win.execute_workflow = cb
+
+
     def show_confirm(self, title: str, detail: str) -> None:
         """Thread-safe: raise the irreversible-action gate. Called from action
         handlers running in executor threads, so it goes through a signal."""
