@@ -182,9 +182,15 @@ def _search_roots(roots, q, max_results, recursive=True):
 
 def file_search_advance(query: str, root: str = "", extension: str = "", limit: int = 30):
     reset_file_search_cancel()
-    q = (query or "").lower().strip()
+    raw_q = (query or "").strip()
+    low_q = raw_q.lower()
+    exhaustive = any(word in low_q.split() for word in ("every", "all"))
+    q = low_q
+    for marker in ("every", "all", "files", "file", "named", "called"):
+        q = q.replace(marker, " ")
+    q = " ".join(q.split()).strip()
     ext = (extension or "").lower().strip()
-    max_results = max(1, min(int(limit or 30), 100))
+    max_results = max(1, min(int(limit or (100 if exhaustive else 30)), 500 if exhaustive else 100))
 
     if root:
         base = Path(root).expanduser()
@@ -192,34 +198,51 @@ def file_search_advance(query: str, root: str = "", extension: str = "", limit: 
             return "Access denied: the requested search root is outside the available local drives."
         roots = [base.resolve()]
         results = _search_roots(roots, q, max_results)
-        return "\n".join(results) if results else "No matching files or folders found."
+        return ("Search cancelled." if SEARCH_CANCEL_EVENT.is_set() else 
+                ("\n".join(results) if results else "No matching files or folders found."))
 
-    # 1. Common user folders first: Desktop, Documents, Downloads, etc.
     common = _existing(COMMON_ROOTS)
-    results = _search_roots(common, q, max_results)
-    if results:
-        return "\n".join(results)
-
-    # 2. Development folders next: G:/Coding, G:/Projects.
     dev = _existing(PRIORITY_ROOTS)
-    results = _search_roots(dev, q, max_results)
-    if results:
-        return "\n".join(results)
-
-    # 3. Only if nothing was found, search the whole PC.
-    # Avoid rescanning roots already searched above.
     searched = {str(p).lower() for p in common + dev}
     all_drives = [p for p in _available_drives() if str(p).lower() not in searched]
 
-    results = _search_roots(all_drives, q, max_results)
-    if results:
-        return "\n".join(results)
+    # Normal searches stop at the first useful root for speed.
+    if not exhaustive:
+        results = _search_roots(common, q, max_results)
+        if results:
+            return "\n".join(results)
+        results = _search_roots(dev, q, max_results)
+        if results:
+            return "\n".join(results)
+        results = _search_roots(all_drives, q, max_results)
+        if results:
+            return "\n".join(results)
+    else:
+        # "every/all" means aggregate across the PC until the result cap.
+        results = []
+        seen = set()
+        for roots in (common, dev, all_drives):
+            if SEARCH_CANCEL_EVENT.is_set():
+                return "Search cancelled."
+            for item in _search_roots(roots, q, max_results):
+                key = item.lower()
+                if key not in seen:
+                    results.append(item)
+                    seen.add(key)
+                    if len(results) >= max_results:
+                        break
+            if len(results) >= max_results:
+                break
+        if results:
+            suffix = f"\n\nShowing up to {max_results} matching results."
+            return "\n".join(results) + suffix
 
-    # Apply extension filtering to a final fallback search if requested.
     if ext:
         wanted = ext if ext.startswith(".") else "." + ext
         for base in all_drives:
             for folder, dirs, files in _walk(base):
+                if SEARCH_CANCEL_EVENT.is_set():
+                    return "Search cancelled."
                 for name in files:
                     if Path(name).suffix.lower() == wanted and (
                         not q or q in name.lower() or q in str(folder).lower()
