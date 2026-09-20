@@ -28,11 +28,11 @@ def _window():
     except Exception: return {"title":"", "class_name":""}
 
 def _json(text: str):
-    raw = re.sub(r"^```(?:json)?\\s*", "", (text or "").strip(), flags=re.I)
-    raw = re.sub(r"\\s*```$", "", raw)
+    raw = re.sub(r"^```(?:json)?\s*", "", (text or "").strip(), flags=re.I)
+    raw = re.sub(r"\s*```$", "", raw)
     try: return json.loads(raw)
     except Exception: pass
-    m = re.search(r"\\{.*\\}", raw, flags=re.S)
+    m = re.search(r"\{.*\}", raw, flags=re.S)
     if not m: return None
     try: return json.loads(m.group(0))
     except Exception: return None
@@ -88,7 +88,7 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
 
     # If the goal explicitly names an app to open, open and focus it before
     # the visual loop. This prevents the first UI action from landing in JARVIS.
-    m = re.search(r"\\bopen\\s+([A-Za-z0-9 ._-]+?)(?=\\s*(?:,|\\band\\b|\\bthen\\b|$))", goal, flags=re.I)
+    m = re.search(r"open\s+([A-Za-z0-9 ._-]+?)(?=\s*(?:,|\band\b|\bthen\b|$))", goal, flags=re.I)
     if m:
         app_name = m.group(1).strip().strip(" .")
         if app_name:
