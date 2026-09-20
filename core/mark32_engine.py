@@ -725,7 +725,8 @@ class Mark32Engine:
                 elif tool == "android":
                     result = self.android.status()
                 else:
-                    routes = self.router.route(goal)\n                    result = f"ROUTE_REQUIRED:{desc}; available={routes}"
+                    routes = self.router.route(goal)
+                    result = f"ROUTE_REQUIRED:{desc}; available={routes}"
                 check = self.verifier.verify(desc, result)
                 results.append({"step": step, "result": result, "verification": check})
                 if not check["verified"] and tool != "route":
