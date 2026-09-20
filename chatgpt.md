@@ -24,34 +24,17 @@ Read `architecture.md` before making structural changes.
 
 ## Existing major capabilities
 
-Do not propose or implement these as "new" unless the request explicitly asks for changes:
+In addition to the original capabilities, the current build includes:
 
-- Voice conversation through Gemini Live.
-- Animated HUD / Arc Core reactor HUD.
-- Facial animation and lip sync.
-- Wake word.
-- Push-to-talk.
-- Audio device selection.
-- Screen and webcam vision.
-- Windows desktop/UI automation.
-- Android/ADB control.
-- Browser control.
-- File search and file management.
-- File/document processing.
-- Terminal agent.
-- Coding/testing agent.
-- Mark 32 autonomous planning/execution.
-- Mark 32 verification and cancellation.
-- Long-term memory.
-- Clipboard intelligence.
-- Notifications and reminders.
-- Calendar/email/communication integrations.
-- WhatsApp incoming-call detection.
-- Background monitoring.
-- Remote dashboard.
-- Plugin/action discovery.
-- Live theming and assistant customization.
-- Task terminal and task observability.
+- Meeting Copilot
+- Knowledge Vault
+- Workflow Recorder
+- Event Rules Engine
+- Hardware Diagnostics
+- Safe Self-Updater
+- Personal Workspace profiles
+- Normal / Gaming / Serious operating modes
+- Coding / Study / Work / Presentation / Travel workspace contexts
 
 ## Rules for changes
 
