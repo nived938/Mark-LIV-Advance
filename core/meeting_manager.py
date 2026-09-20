@@ -82,8 +82,7 @@ def stop_meeting() -> dict:
         return {"ok": False, "message": "No active meeting."}
     data["active"] = False
     data["ended_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    transcript = "
-".join(
+    transcript = "\n".join(
         f"[{line.get('time','')}] {line.get('speaker','User')}: {line.get('text','')}"
         for line in data.get("lines") or []
     )
