@@ -4,7 +4,7 @@ import platform
 import shutil
 from pathlib import Path
 
-from core.app_registry import ensure_index, find_app
+from core.app_registry import INDEX_PATH, ensure_index, find_app, refresh
 
 try:
     import psutil
@@ -146,8 +146,24 @@ def _launch_windows(app_name: str) -> bool:
         except Exception as e:
             print(f"[open_app] PATH launch failed: {e}")
 
+    # If this is the first run, build the index synchronously so the very
+    # first "open <app>" command can work without Windows Search.
+    if not INDEX_PATH.exists():
+        print("[open_app] Building application index for first use...")
+        refresh(blocking=True)
+        indexed = find_app(app_name)
+        if indexed:
+            exe = indexed["path"]
+            try:
+                subprocess.Popen([exe], cwd=str(Path(exe).parent), close_fds=True)
+                time.sleep(1.5)
+                _focus_window((indexed.get("name", app_name),), timeout=3.0)
+                return True
+            except Exception as e:
+                print(f"[open_app] First-run indexed executable failed: {e}")
+
     # The index can be stale after a new application is installed. Refresh it
-    # in the background, but never fall back to Start Menu search.
+    # in the background, but never fall back to Windows Search/Start Menu.
     ensure_index()
     return False
 
