@@ -80,7 +80,7 @@ class WhatsAppIncomingAgent:
 
     @staticmethod
     def _norm(value: str) -> str:
-        return re.sub(r"\\s+", " ", str(value or "")).strip().lower()
+        return re.sub(r"\s+", " ", str(value or "")).strip().lower()
 
     @staticmethod
     def _safe_text(control) -> str:
@@ -143,11 +143,11 @@ class WhatsAppIncomingAgent:
 
         # Prefer explicit phrases exposed by the native call dialog.
         for raw in texts:
-            clean = re.sub(r"\\s+", " ", raw).strip()
+            clean = re.sub(r"\s+", " ", raw).strip()
             low = clean.lower()
             for pattern in (
-                r"(?:incoming\\s+call\\s+from|call\\s+from|incoming\\s+call|calling)\\s*[:\\-]?\\s*(.+)$",
-                r"^(.+?)\\s+(?:is\\s+)?calling$",
+                r"(?:incoming\s+call\s+from|call\s+from|incoming\s+call|calling)\s*[:\\-]?\s*(.+)$",
+                r"^(.+?)\s+(?:is\s+)?calling$",
             ):
                 m = re.search(pattern, clean, flags=re.IGNORECASE)
                 if m:
@@ -158,7 +158,7 @@ class WhatsAppIncomingAgent:
         # Otherwise use a short non-generic text element. The native dialog
         # normally exposes the caller name separately from its buttons.
         for raw in texts:
-            clean = re.sub(r"\\s+", " ", raw).strip(" -:|")
+            clean = re.sub(r"\s+", " ", raw).strip(" -:|")
             low = self._norm(clean)
             if not clean or low in _GENERIC:
                 continue
