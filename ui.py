@@ -2931,6 +2931,7 @@ class MainWindow(QMainWindow):
     _quiz_sig       = pyqtSignal(str, object, object)  # (topic, questions, grader)
     _quiz_hide_sig  = pyqtSignal()
     _review_sig     = pyqtSignal(str, str, object, object)  # document review payload
+    _task_sig       = pyqtSignal(str)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -3091,6 +3092,7 @@ class MainWindow(QMainWindow):
         self._quiz_sig.connect(self._show_quiz)
         self._quiz_hide_sig.connect(self._hide_quiz)
         self._review_sig.connect(self._show_review)
+        self._task_sig.connect(self._append_task_log)
         self._cam_stop = threading.Event()
         self._cam_stop.set()
         self._latest_cam_frame: bytes | None = None
@@ -3126,6 +3128,19 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             print(f"[UI] Close cleanup request failed: {exc}")
         event.accept()
+    def write_task_log(self, message: str):
+        """Thread-safe append to the left-side live task terminal."""
+        stamp = time.strftime("%H:%M:%S")
+        self._task_sig.emit(f"[{stamp}] {str(message).strip()[:240]}")
+
+    def _append_task_log(self, message: str):
+        if not hasattr(self, "_task_terminal"):
+            return
+        self._task_terminal.append(message)
+        self._task_terminal.moveCursor(
+            self._task_terminal.textCursor().MoveOperation.End
+        )
+
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
         self._cam_preview.show_frame(img_bytes)
@@ -3791,6 +3806,25 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(info_panel)
         lay.addSpacing(4)
+
+        task_hdr = QLabel("◈ TASK TERMINAL")
+        task_hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        task_hdr.setStyleSheet(
+            f"color: {C.PRI}; background: transparent; "
+            f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;"
+        )
+        lay.addWidget(task_hdr)
+
+        self._task_terminal = QTextEdit()
+        self._task_terminal.setReadOnly(True)
+        self._task_terminal.setFixedHeight(175)
+        self._task_terminal.setFont(QFont("Courier New", 6))
+        self._task_terminal.setStyleSheet(
+            f"QTextEdit {{ background: #000308; color: {C.GREEN}; "
+            f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px; }}"
+        )
+        self._task_terminal.setPlaceholderText("TASK TERMINAL // IDLE")
+        lay.addWidget(self._task_terminal)
 
         lay.addStretch()
 
