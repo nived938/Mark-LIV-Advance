@@ -1,7 +1,9 @@
 """WhatsApp Windows desktop incoming-call agent.
 
-Uses Windows UI Automation through pywinauto to watch for WhatsApp's native
-incoming-call dialog. It deliberately does not use WhatsApp Web.
+WhatsApp Desktop can expose an incoming call in two stages on some Windows
+builds: the chat first shows a "Calling..." / "Calling" call item, and clicking
+that item opens the native call controls. This agent handles both stages.
+It deliberately does not use WhatsApp Web.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ _GENERIC = {
     "whatsapp", "accept", "answer", "decline", "reject", "ignore",
     "cancel", "more", "device settings", "settings", "video call",
     "voice call", "audio call", "start video call", "start voice call",
+    "calling", "calling...", "incoming call", "incoming call...",
 }
 
 
@@ -44,16 +47,17 @@ class WhatsAppIncomingAgent:
     def __init__(
         self,
         on_incoming: Optional[Callable[[IncomingCall], None]] = None,
-        poll_seconds: float = 0.7,
+        poll_seconds: float = 0.5,
     ):
         self.on_incoming = on_incoming
-        self.poll_seconds = max(0.3, float(poll_seconds))
+        self.poll_seconds = max(0.25, float(poll_seconds))
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.RLock()
         self._pending: Optional[IncomingCall] = None
         self._last_signature = ""
         self._last_seen_at = 0.0
+        self._last_bridge_click = 0.0
 
     @property
     def pending(self) -> Optional[IncomingCall]:
@@ -96,6 +100,28 @@ class WhatsAppIncomingAgent:
         except Exception:
             return ""
 
+    @staticmethod
+    def _safe_class(control) -> str:
+        try:
+            return str(getattr(control, "class_name", lambda: "")() or "").strip()
+        except Exception:
+            return ""
+
+    def _is_whatsapp_process(self, control) -> bool:
+        if psutil is None:
+            return False
+        try:
+            pid = control.process_id()
+            p = psutil.Process(pid)
+            blob = " ".join([
+                p.name(),
+                p.exe() or "",
+                " ".join(p.cmdline()),
+            ]).lower()
+            return "whatsapp" in blob
+        except Exception:
+            return False
+
     def _find_buttons(self, window):
         accept = decline = None
         try:
@@ -105,7 +131,6 @@ class WhatsAppIncomingAgent:
         for control in controls:
             name = self._norm(self._safe_text(control))
             aid = self._norm(self._safe_id(control))
-            combined = f"{name} {aid}"
             if accept is None and (
                 name in {"accept", "answer"}
                 or "accept" in name
@@ -125,11 +150,6 @@ class WhatsAppIncomingAgent:
         return accept, decline
 
     def _extract_caller(self, window) -> str:
-        """Extract the caller from fresh UIA text on every poll.
-
-        WhatsApp can rebuild its call window while ringing, so cached controls
-        are intentionally never reused for detection.
-        """
         texts = []
         try:
             title = self._safe_text(window)
@@ -146,78 +166,142 @@ class WhatsAppIncomingAgent:
         except Exception:
             pass
 
-        # Prefer explicit phrases exposed by the native call dialog.
         for raw in texts:
             clean = re.sub(r"\s+", " ", raw).strip()
-            low = clean.lower()
             for pattern in (
-                r"(?:incoming\s+call\s+from|call\s+from|incoming\s+call|calling)\s*[:\\-]?\s*(.+)$",
+                r"(?:incoming\s+call\s+from|call\s+from|incoming\s+call|calling)\s*[:\-]?\s*(.+)$",
                 r"^(.+?)\s+(?:is\s+)?calling$",
             ):
                 m = re.search(pattern, clean, flags=re.IGNORECASE)
                 if m:
-                    candidate = m.group(1).strip(" -:|")
+                    candidate = m.group(1).strip(" -:|.")
                     if candidate and self._norm(candidate) not in _GENERIC:
                         return candidate
 
-        # Otherwise use a short non-generic text element. The native dialog
-        # normally exposes the caller name separately from its buttons.
         for raw in texts:
-            clean = re.sub(r"\s+", " ", raw).strip(" -:|")
+            clean = re.sub(r"\s+", " ", raw).strip(" -:|.")
             low = self._norm(clean)
             if not clean or low in _GENERIC:
                 continue
-            if len(clean) > 80:
+            if len(clean) > 80 or clean.isdigit():
                 continue
             if any(word in low for word in (
                 "incoming", "call", "device", "microphone", "camera",
-                "settings", "whatsapp",
+                "settings", "whatsapp", "calling",
             )):
-                continue
-            if clean.isdigit():
                 continue
             return clean
         return "someone"
 
+    def _find_whatsapp_windows(self):
+        if Desktop is None:
+            return []
+        try:
+            return Desktop(backend="uia").windows(visible_only=False)
+        except Exception:
+            return []
+
+    def _looks_like_whatsapp(self, window) -> bool:
+        title = self._norm(self._safe_text(window))
+        aid = self._norm(self._safe_id(window))
+        if "whatsapp" in title or "whatsapp" in aid:
+            return True
+        return self._is_whatsapp_process(window)
+
+    def _click_calling_bridge(self) -> bool:
+        """Find the visible 'Calling...' call item in the WhatsApp chat and click it.
+
+        Some WhatsApp Desktop builds do not expose the incoming call controls
+        until the current chat's 'Calling...' item is activated. We therefore
+        treat that item as a bridge into the real call dialog.
+        """
+        now = time.time()
+        if now - self._last_bridge_click < 2.0:
+            return False
+
+        for window in self._find_whatsapp_windows():
+            if not self._looks_like_whatsapp(window):
+                continue
+
+            candidates = [window]
+            try:
+                candidates.extend(window.descendants())
+            except Exception:
+                pass
+
+            for control in candidates:
+                text = self._norm(self._safe_text(control))
+                if text not in {"calling", "calling...", "calling…"}:
+                    continue
+
+                # Do not click the entire application window. Prefer the
+                # actual text control, then its clickable parent.
+                click_targets = [control]
+                try:
+                    parent = control.parent()
+                    if parent is not None:
+                        click_targets.append(parent)
+                except Exception:
+                    pass
+
+                for target in click_targets:
+                    try:
+                        target.click_input()
+                        self._last_bridge_click = now
+                        print("[WhatsAppAgent] Found WhatsApp 'Calling...' item; clicked it to open call controls.")
+                        time.sleep(0.35)
+                        return True
+                    except Exception:
+                        try:
+                            target.invoke()
+                            self._last_bridge_click = now
+                            print("[WhatsAppAgent] Invoked WhatsApp 'Calling...' item to open call controls.")
+                            time.sleep(0.35)
+                            return True
+                        except Exception:
+                            pass
+        return False
+
     def _find_incoming(self):
         if Desktop is None:
             return None
-        try:
-            windows = Desktop(backend="uia").windows(visible_only=True)
-        except Exception:
-            return None
 
+        windows = self._find_whatsapp_windows()
+
+        # Stage 1: the chat contains a "Calling..." item. Clicking it should
+        # reveal the native call controls on affected WhatsApp builds.
+        self._click_calling_bridge()
+
+        # Stage 2: after the bridge click, look again for Accept/Decline.
+        # Search all UIA windows, because the native call surface can have a
+        # caller-only title and no "WhatsApp" title.
         for window in windows:
-            title = self._safe_text(window)
-            low_title = self._norm(title)
-            # WhatsApp's incoming-call UI is a native dialog and exposes
-            # Accept/Decline controls. Checking the controls prevents the main
-            # WhatsApp window from being mistaken for a call.
-            whatsapp_window = "whatsapp" in low_title or "whatsapp" in self._norm(self._safe_id(window))
-            if not whatsapp_window and psutil is not None:
-                try:
-                    process_name = psutil.Process(window.process_id()).name().lower()
-                    whatsapp_window = "whatsapp" in process_name
-                except Exception:
-                    pass
-            if not whatsapp_window:
-                # Some builds title the native call dialog with the caller name.
-                # In that case require WhatsApp text somewhere in the fresh UIA
-                # tree before accepting the window as a call.
+            accept, decline = self._find_buttons(window)
+            if accept is None or decline is None:
+                continue
+
+            whatsapp = self._looks_like_whatsapp(window)
+            if not whatsapp:
                 try:
                     sample = " ".join(
                         self._safe_text(x).lower()
                         for x in window.descendants()
                         if self._safe_text(x)
                     )
-                    whatsapp_window = "whatsapp" in sample
+                    whatsapp = "whatsapp" in sample
                 except Exception:
-                    whatsapp_window = False
-            if not whatsapp_window:
+                    whatsapp = False
+            if not whatsapp:
+                # Native call windows may have a caller-only title. The
+                # presence of both native call controls is strong evidence, but
+                # still require a WhatsApp process somewhere in the ancestry.
+                try:
+                    whatsapp = self._is_whatsapp_process(window)
+                except Exception:
+                    whatsapp = False
+            if not whatsapp:
                 continue
-            accept, decline = self._find_buttons(window)
-            if accept is None or decline is None:
-                continue
+
             caller = self._extract_caller(window)
             return IncomingCall(
                 caller=caller,
@@ -226,6 +310,7 @@ class WhatsAppIncomingAgent:
                 decline_control=decline,
                 detected_at=time.time(),
             )
+
         return None
 
     @staticmethod
@@ -245,8 +330,6 @@ class WhatsAppIncomingAgent:
             call = self._pending
         if not call:
             return False, "There is no pending WhatsApp incoming call."
-        # Re-find the control before acting because WhatsApp can rebuild the
-        # dialog between detection and the user's spoken response.
         fresh = self._find_incoming()
         control = fresh.accept_control if fresh else call.accept_control
         ok, error = self._click(control)
@@ -275,25 +358,23 @@ class WhatsAppIncomingAgent:
             try:
                 call = self._find_incoming()
                 if call is None:
-                    # If the ringing dialog disappeared without JARVIS receiving
-                    # a response (for example the caller hung up), release the
-                    # pending state so the next call can be announced.
                     with self._lock:
                         if self._pending and time.time() - self._last_seen_at > 120:
                             self._pending = None
                             self._last_signature = ""
                     continue
-                signature = f"{self._norm(call.caller)}:{round(call.detected_at, 1)}"
+
+                signature = self._norm(call.caller)
                 with self._lock:
                     already_pending = self._pending is not None
                     same_recent = (
-                        signature.split(":")[0] == self._last_signature.split(":")[0]
+                        signature == self._last_signature
                         and time.time() - self._last_seen_at < 5
                     )
                     if already_pending or same_recent:
                         continue
                     self._pending = call
-                    self._last_signature = self._norm(call.caller)
+                    self._last_signature = signature
                     self._last_seen_at = time.time()
 
                 print(f"[WhatsAppAgent] Incoming call detected from {call.caller}.")
