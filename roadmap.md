@@ -170,17 +170,50 @@ Each workspace can define:
 
 This is a new context/workspace system, not a replacement for the existing task agent.
 
-## Suggested implementation order
+# New Feature Roadmap
 
-1. Meeting & Call Copilot
-2. Knowledge Vault
-3. Workflow Recorder
-4. Event Rules Engine
-5. Hardware Diagnostics Center
-6. Secure Credential Vault
-7. Multi-User Identity
-8. Personal Workspace Modes
-9. Plugin Marketplace
-10. J.A.R.V.I.S. Self-Updater
+## Implemented in the current Mark 32 build
 
-The order is an implementation roadmap only; it is not a quality ranking.
+The following previously proposed capabilities are now implemented:
+
+| Feature | Main implementation |
+|---|---|
+| Meeting & Call Copilot | `core/meeting_manager.py`, `actions/meeting_copilot.py` |
+| Knowledge Vault | `core/knowledge_vault.py`, `actions/knowledge_vault.py` |
+| Workflow Recorder | `core/workflow_manager.py`, `actions/workflow_recorder.py` |
+| Event Rules Engine | `core/event_rules.py`, `actions/event_rules.py` |
+| Hardware Diagnostics Center | `core/hardware_diagnostics.py`, `actions/hardware_diagnostics.py` |
+| J.A.R.V.I.S. Self-Updater | `core/self_updater.py`, `actions/self_updater.py` |
+| Personal Workspace Modes | `core/workspace_manager.py`, `actions/workspace_control.py` |
+| Operating Modes | `core/mode_manager.py`, `actions/mode_control.py` |
+
+### Operating modes
+
+- **Normal** — current standard J.A.R.V.I.S. behavior.
+- **Gaming** — opens Steam and stops a conservative configurable list of optional background desktop apps. It never targets the J.A.R.V.I.S. process or protected Windows processes.
+- **Serious** — explicitly selected autonomous mode. Mark 32's routine confirmation layer is relaxed for requested operations; operating-system ACL/UAC permissions still apply.
+
+Switch back to Normal at any time with `mode_control`.
+
+### Workspace modes
+
+Separate from operating modes, persistent workspaces include:
+
+- Coding
+- Study
+- Work
+- Presentation
+- Travel
+
+Workspaces can also be user-defined with their own context and optional apps.
+
+## Remaining future ideas
+
+The original roadmap also contains these not-yet-built ideas:
+
+- Secure Credential Vault
+- Multi-User Identity
+- Plugin Marketplace
+
+These remain future product areas and should not be treated as existing capabilities.
+
