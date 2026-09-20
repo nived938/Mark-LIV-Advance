@@ -575,12 +575,23 @@ def data_usage_status() -> dict:
 # QR scanning
 # ---------------------------------------------------------------------------
 
-def scan_qr_screen() -> str:
+def scan_qr_screen(monitor_index: int = 0) -> str:
+    """Scan a QR code from the full desktop or a specific monitor.
+
+    monitor_index=0 captures the full virtual desktop; 1, 2, ... target an
+    individual physical monitor in MSS order.
+    """
     import cv2
     import mss
     import numpy as np
     with mss.mss() as sct:
-        monitor = sct.monitors[0]
+        try:
+            idx = int(monitor_index)
+        except Exception:
+            idx = 0
+        if idx < 0 or idx >= len(sct.monitors):
+            idx = 0
+        monitor = sct.monitors[idx]
         frame = np.array(sct.grab(monitor))
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     detector = cv2.QRCodeDetector()
