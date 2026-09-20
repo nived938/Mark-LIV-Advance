@@ -18,6 +18,7 @@ CALL_WORDS = (
     "incoming", "calling", "call", "ringing",
 )
 PROC_WORDS = ("whatsapp", "webview", "msedgewebview", "teams")
+WHATSAPP_PROC_WORDS = ("whatsapp", "webview", "msedgewebview")
 
 
 def safe(fn, default=""):
@@ -32,8 +33,37 @@ def enum_win32_windows():
     user32 = ctypes.windll.user32
     rows = []
 
-    # Do not use @wintypes.BOOL here. wintypes.BOOL is a ctypes type,
-    # not a decorator. A plain Python callback works with EnumWindows.
+    # Explicit ctypes signatures are required on 64-bit Windows.
+    # Without argtypes, EnumWindows cannot convert the Python callback.
+    enum_proc_type = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HWND,
+        wintypes.LPARAM,
+    )
+    user32.EnumWindows.argtypes = [enum_proc_type, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [
+        wintypes.HWND,
+        wintypes.LPWSTR,
+        ctypes.c_int,
+    ]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.GetClassNameW.argtypes = [
+        wintypes.HWND,
+        wintypes.LPWSTR,
+        ctypes.c_int,
+    ]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+
     def callback(hwnd, _lparam):
         length = user32.GetWindowTextLengthW(hwnd)
         buf = ctypes.create_unicode_buffer(max(length + 1, 256))
@@ -51,7 +81,8 @@ def enum_win32_windows():
             rows.append((int(hwnd), int(pid.value), title, class_buf.value, visible))
         return True
 
-    user32.EnumWindows(callback, 0)
+    callback_ref = enum_proc_type(callback)
+    user32.EnumWindows(callback_ref, 0)
     return rows
 
 
@@ -60,8 +91,17 @@ def relevant_text(text):
     return any(word in blob for word in CALL_WORDS)
 
 
+def is_whatsapp_process(pid):
+    try:
+        p = psutil.Process(pid)
+        blob = f"{p.name()} {p.exe()} {' '.join(p.cmdline() or [])}".lower()
+        return any(word in blob for word in WHATSAPP_PROC_WORDS)
+    except Exception:
+        return False
+
+
 print("=" * 80)
-print("WhatsApp incoming-call DEEP diagnostic")
+print("WhatsApp incoming-call DEEP diagnostic") 
 print("1. Keep WhatsApp Desktop open.")
 print("2. Start the WhatsApp call from another phone NOW.")
 print("3. Keep the small incoming-call popup visible for at least 8 seconds.")
@@ -125,8 +165,6 @@ while time.time() < end:
         aid = safe(lambda: win.element_info.automation_id)
         ctype = safe(lambda: win.element_info.control_type)
 
-        # Inspect the window's descendants, but only retain call-related
-        # controls. This prevents dumping the entire WhatsApp chat history.
         texts = []
         try:
             for control in win.descendants():
@@ -167,6 +205,24 @@ while time.time() < end:
         except Exception:
             pname = ""
 
+        # The WhatsApp popup may have an empty title/class that contains
+        # no call words. Report all visible top-level windows belonging
+        # to WhatsApp/WebView processes so we can identify the popup.
+        if is_whatsapp_process(pid):
+            key = ("whatsapp-win32", hwnd, title, cls, visible)
+            if key not in printed:
+                printed.add(key)
+                print("=" * 80)
+                print("WIN32 WHATSAPP WINDOW")
+                print("HWND:", hwnd)
+                print("PID:", pid)
+                print("PROCESS:", pname)
+                print("VISIBLE:", visible)
+                print("TITLE:", repr(title))
+                print("CLASS:", repr(cls))
+                print()
+            continue
+
         blob = f"{title} {cls} {pname}".lower()
         if not any(word in blob for word in CALL_WORDS):
             continue
@@ -191,7 +247,8 @@ while time.time() < end:
 print("=" * 80)
 print("Diagnostic finished.")
 print("Paste only these sections if they appear:")
-print("  PROCESS MATCH")
 print("  UIA CALL CANDIDATE")
 print("  WIN32 CALL CANDIDATE")
-print("You do NOT need to paste the normal WhatsApp chat-list output.")
+print("  WIN32 WHATSAPP WINDOW")
+print("You do NOT need to paste PROCESS MATCH sections.")
+"
