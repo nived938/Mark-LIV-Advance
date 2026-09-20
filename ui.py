@@ -3139,6 +3139,11 @@ class MainWindow(QMainWindow):
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
+        try:
+            from core.mode_manager import current_mode
+            self.set_mode_display(current_mode())
+        except Exception:
+            self.set_mode_display("normal")
         if not self._ready:
             self._show_setup()
 
@@ -3803,8 +3808,24 @@ class MainWindow(QMainWindow):
         self._date_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
         self._date_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._date_lbl)
+
+        self._mode_lbl = QLabel("MODE  NORMAL")
+        self._mode_lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        self._mode_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        right_col.addWidget(self._mode_lbl)
+
         lay.addLayout(right_col)
         return w
+
+    def set_mode_display(self, mode: str) -> None:
+        mode = str(mode or "normal").strip().lower()
+        labels = {"normal": ("MODE  NORMAL", C.TEXT_MED),
+                  "gaming": ("MODE  GAMING", C.GREEN),
+                  "serious": ("MODE  SERIOUS", C.RED)}
+        text, color = labels.get(mode, ("MODE  NORMAL", C.TEXT_MED))
+        if hasattr(self, "_mode_lbl"):
+            self._mode_lbl.setText(text)
+            self._mode_lbl.setStyleSheet(f"color: {color}; background: transparent;")
 
     def _tick_clock(self):
         self._clock_lbl.setText(time.strftime("%H:%M:%S"))
@@ -5687,6 +5708,10 @@ class JarvisUI:
     def stop_camera_stream(self) -> None:
         """Thread-safe: stop the live camera feed."""
         self._win.stop_camera_stream()
+
+    def set_mode_display(self, mode: str) -> None:
+        """Update the visible operating-mode label in the HUD header."""
+        self._win.set_mode_display(mode)
 
     @property
     def assistant_name(self) -> str:
