@@ -405,7 +405,7 @@ TOOL = {
             "contact": {"type": "STRING", "description": "WhatsApp contact name"},
             "phone": {"type": "STRING", "description": "International phone number"},
             "message": {"type": "STRING", "description": "Message text"},
-            "confirmation": {"type": "STRING", "description": "Legacy field, not required"},\n            "message": {"type": "STRING", "description": "For incoming-call follow-up or call_and_message, the text to send"},
+            "confirmation": {"type": "STRING", "description": "Legacy field, not required"},
         },
         "required": ["action"],
     },
