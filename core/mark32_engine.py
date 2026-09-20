@@ -244,6 +244,7 @@ class ToolRouter:
     execution path; these names are also useful to the autonomous agent."""
 
     ROUTES = {
+        "computer_use": ("computer_use",),
         "file": ("file_search_advance", "file_manage_advance"),
         "terminal": ("terminal_advance", "terminal"),
         "browser": ("browser_advance", "browser_control"),
@@ -263,6 +264,8 @@ class ToolRouter:
         for key, names in self.ROUTES.items():
             if key in low:
                 return list(names)
+        if any(x in low for x in ("computer", "desktop", "gui", "ui", "click", "type", "operate", "create in vscode", "use the app", "use the application")):
+            return list(self.ROUTES["computer_use"])
         if any(x in low for x in ("file", "folder")):
             return list(self.ROUTES["file"])
         if any(x in low for x in ("code", "program", "build")):
