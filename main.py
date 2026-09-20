@@ -70,6 +70,7 @@ from actions.background_monitor import (
     add_monitor, remove_monitor, list_monitors, check_all as monitor_check_all,
 )
 from actions.whatsapp_incoming_agent import start_incoming_call_agent
+from actions.file_search_advance import set_search_logger
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import (
     get_brief_enabled, get_media_resolution, get_proactive_audio_enabled,
@@ -621,6 +622,7 @@ class JarvisLive:
             reserved_names=_inline_names,
             logger=lambda msg: print(f"[Actions] {msg}"),
         )
+        set_search_logger(self.ui.write_task_log)
 
         # Plugins must not collide with either an inline tool or a discovered action.
         _core_names = _inline_names | self._action_registry.names()
@@ -1205,11 +1207,33 @@ class JarvisLive:
 
         return out
 
+    def _log_task_event(self, message: str) -> None:
+        """Send a live operation line to the left-side task terminal."""
+        try:
+            self.ui.write_task_log(message)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _needs_task_terminal(name: str) -> bool:
+        return str(name or "").lower().strip() in {
+            "file_search_advance", "mark32_advance", "terminal_advance",
+            "terminal", "test", "compile", "browser_advance", "browser_control",
+            "web_search", "code_helper", "dev_agent", "phone_advance",
+            "screen_control_advance", "screen_process", "camera_advance",
+            "whatsapp_advance", "calendar_advance", "email_advance",
+            "file_processor", "image_processor", "ocr_advance",
+        }
+
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
 
         print(f"[JARVIS] 🔧 {name}  {args}")
+        if self._needs_task_terminal(name):
+            self._log_task_event(f"> {name.upper()} START")
+            if args:
+                self._log_task_event(f"  args: {str(args)[:180]}")
         self.ui.set_state("THINKING")
 
 
@@ -1361,6 +1385,14 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
+        if self._needs_task_terminal(name):
+            low_result = str(result or "").lower()
+            if "cancel" in low_result:
+                self._log_task_event(f"< {name.upper()} CANCELLED")
+            elif "failed" in low_result or "error" in low_result or "not found" in low_result:
+                self._log_task_event(f"< {name.upper()} ERROR")
+            else:
+                self._log_task_event(f"< {name.upper()} COMPLETE")
 
         # A tool that declared itself NON_BLOCKING also says when its answer may
         # re-enter the conversation. Without this the model finishes whatever it
