@@ -168,7 +168,7 @@ def jarvis_services(parameters: dict = None, player=None, **_) -> str:
     if service in {"qr", "qrcode", "qr_code"}:
         source = str(p.get("source") or "camera").strip().lower()
         if source == "screen":
-            value = scan_qr_screen()
+            value = scan_qr_screen(int(p.get("monitor") or 0))
         else:
             value = scan_qr_camera(player, timeout=float(p.get("timeout") or 30))
         if not value:
@@ -220,6 +220,7 @@ TOOL = {
             "id": {"type": "STRING", "description": "Saved timetable item ID."},
             "source": {"type": "STRING", "description": "QR source: camera or screen."},
             "timeout": {"type": "NUMBER", "description": "QR camera scan timeout in seconds."},
+            "monitor": {"type": "NUMBER", "description": "Monitor number for screen QR scanning: 0=all monitors, 1=first monitor, 2=second monitor."},
             "host": {"type": "STRING", "description": "Host for network diagnostic ping/DNS."},
             "url": {"type": "STRING", "description": "URL for HTTP connectivity testing."},
             "label": {"type": "STRING", "description": "Map label."},
