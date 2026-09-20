@@ -465,6 +465,14 @@ class HudCanvas(QWidget):
         except Exception:
             pass
 
+    @property
+    def execute_workflow(self):
+        return self._win.execute_workflow
+
+    @execute_workflow.setter
+    def execute_workflow(self, cb):
+        self._win.execute_workflow = cb
+
     def push_visemes(self, frames, hop: float, at: float) -> None:
         """Thread-safe: hand over a schedule of (level, openness, width) frames.
 
@@ -2975,6 +2983,7 @@ class MainWindow(QMainWindow):
         self.on_close          = None   # callable: () -> None — gracefully stop JARVIS before window exit
         self.on_voice_change   = None   # callable: () -> None — rebuild session with new voice
         self.on_audio_device_change = None  # callable: () -> None — reopen audio streams
+        self.execute_workflow    = None  # callable: (workflow: dict) -> str
         self._confirm_overlay  = None   # live ConfirmBanner, if one is on screen
         self.get_plugins       = None   # callable: () -> list[dict], set by JarvisLive
         self.get_plugin_settings = None # callable: () -> list[dict] settings schemas, set by JarvisLive
