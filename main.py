@@ -1662,6 +1662,14 @@ class JarvisLive:
                             if txt:
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
+                                # Meeting Copilot captures microphone input
+                                # transcription while a meeting is active.
+                                try:
+                                    from core.meeting_manager import append_line, is_active
+                                    if is_active():
+                                        append_line("User", txt)
+                                except Exception:
+                                    pass
 
                         if sc.turn_complete:
                             if self._turn_done_event:
