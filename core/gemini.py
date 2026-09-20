@@ -66,10 +66,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 import threading
 from pathlib import Path
+
+from core.env import load_env
 
 if getattr(sys, "frozen", False):
     _BASE = Path(sys.executable).parent
@@ -77,6 +80,8 @@ else:
     _BASE = Path(__file__).resolve().parent.parent
 
 _KEY_FILE = _BASE / "config" / "api_keys.json"
+
+load_env()
 
 # Ladders, tried left to right. Change a model HERE and the whole app follows.
 FAST = "fast"      # short classification, extraction, one-line decisions
@@ -193,14 +198,20 @@ def _cooling(model: str) -> bool:
 
 
 def api_key(refresh: bool = False) -> str:
-    """The Gemini key from config/api_keys.json. Cached; never raises."""
+    """Read Gemini credentials from .env first, then legacy config JSON."""
     global _cached_key
     with _key_lock:
         if _cached_key is not None and not refresh:
             return _cached_key
+
+        env_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if env_key:
+            _cached_key = env_key
+            return _cached_key
+
         try:
             data = json.loads(_KEY_FILE.read_text(encoding="utf-8"))
-            _cached_key = str(data.get("gemini_api_key") or "")
+            _cached_key = str(data.get("gemini_api_key") or "").strip()
         except Exception:
             _cached_key = ""
         return _cached_key
