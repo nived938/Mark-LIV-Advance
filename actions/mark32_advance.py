@@ -6,7 +6,7 @@ model can route a request directly to them.
 """
 
 import json
-from core.mark32_engine import ENGINE
+from core.mark32_engine import ENGINE, BASE_DIR
 
 
 def mark32_advance(parameters: dict, player=None, speak=None, **_) -> str:
@@ -63,9 +63,9 @@ def mark32_advance(parameters: dict, player=None, speak=None, **_) -> str:
             return reason
         return ENGINE.terminal.run(p.get("command", ""), p.get("cwd", ""), int(p.get("timeout", 60)))
     if action == "test":
-        return ENGINE.coding.test(p.get("path", ""), p.get("command", ""))
+        return ENGINE.coding.test(p.get("path", "") or p.get("cwd", "") or str(BASE_DIR), p.get("command", ""))
     if action == "compile":
-        return ENGINE.coding.inspect_python(p.get("path", ""))
+        return ENGINE.coding.inspect_python(p.get("path", ""), p.get("cwd", ""))
     if action == "browser_open":
         return ENGINE.browser.open(p.get("url", ""))
     if action == "browser_fetch":
@@ -77,7 +77,7 @@ def mark32_advance(parameters: dict, player=None, speak=None, **_) -> str:
     if action == "camera":
         return ENGINE.camera.capture(p.get("path", ""))
     if action == "schedule":
-        return ENGINE.scheduler.add(p.get("run_at", ""), p.get("task", ""))
+        return ENGINE.scheduler.add(p.get("run_at", ""), p.get("task", "") or p.get("message", ""))
     if action == "schedules":
         return str(ENGINE.scheduler.list())
     if action == "remember":
