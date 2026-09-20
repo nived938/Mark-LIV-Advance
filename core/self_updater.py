@@ -39,7 +39,7 @@ def _repo_slug() -> str:
     if rc != 0:
         return ""
     remote = remote.strip()
-    m = re.search(r"github\\.com[:/]+([^/]+)/([^/#]+?)(?:\\.git)?$", remote)
+    m = re.search(r"github\.com[:/]+([^/]+)/([^/#]+?)(?:\.git)?$", remote)
     return f"{m.group(1)}/{m.group(2)}" if m else ""
 
 
