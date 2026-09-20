@@ -21,23 +21,6 @@ def _clean_phone(phone):
     return "".join(c for c in (phone or "") if c.isdigit())
 
 
-def _load_pending():
-    try:
-        if _PENDING_FILE.exists():
-            data = json.loads(_PENDING_FILE.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-    except Exception:
-        pass
-    return {}
-
-
-def _save_pending(data):
-    try:
-        _PENDING_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-
 def _open_desktop():
     try:
         os.startfile("whatsapp:")
@@ -46,26 +29,31 @@ def _open_desktop():
         return False
 
 
-def _find_whatsapp_window():
+def _find_whatsapp_window(timeout=10.0):
+    """Wait for the real installed Windows WhatsApp window to appear."""
     if not Desktop:
         return None
-    try:
-        windows = Desktop(backend="uia").windows()
-        candidates = []
-        for win in windows:
-            try:
-                title = (win.window_text() or "").lower()
-                if "whatsapp" in title:
-                    candidates.append(win)
-            except Exception:
-                continue
-        return candidates[0] if candidates else None
-    except Exception:
-        return None
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            windows = Desktop(backend="uia").windows()
+            for win in windows:
+                try:
+                    title = (win.window_text() or "").strip().lower()
+                    cls = (getattr(win, "class_name", lambda: "")() or "").lower()
+                    if "whatsapp" in title or "whatsapp" in cls:
+                        return win
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return None
 
 
-def _focus_whatsapp():
-    win = _find_whatsapp_window()
+def _focus_whatsapp(timeout=10.0):
+    win = _find_whatsapp_window(timeout)
     if not win:
         return None
     try:
@@ -76,92 +64,134 @@ def _focus_whatsapp():
         win.set_focus()
     except Exception:
         pass
+    time.sleep(0.25)
     return win
 
 
-def _click_search_and_find(contact):
-    win = _focus_whatsapp()
-    if not win:
-        return False, "WhatsApp window was not found."
-
-    # The Windows app's search box is exposed through UI Automation.
+def _set_edit_text(control, text):
     try:
-        edits = win.descendants(control_type="Edit")
-        search = None
-        for edit in edits:
-            try:
-                name = (edit.window_text() or "").lower()
-                if "search" in name:
-                    search = edit
-                    break
-            except Exception:
-                pass
-        if search is None and edits:
-            search = edits[0]
-
-        if search is not None:
-            search.click_input()
-            search.set_edit_text(contact)
-            time.sleep(1.5)
-            pyautogui.press("down")
-            pyautogui.press("enter")
-            time.sleep(1.5)
-            return True, ""
+        control.click_input()
+        time.sleep(0.15)
+        control.set_edit_text(text)
+        return True
     except Exception:
-        pass
+        return False
 
-    # Fallback: use the app's normal search shortcut, but do NOT use a browser.
+
+def _get_edit_controls(win):
+    try:
+        return win.descendants(control_type="Edit")
+    except Exception:
+        return []
+
+
+def _click_search_and_find(contact):
+    win = _focus_whatsapp(timeout=8)
+    if not win:
+        return False, "WhatsApp desktop window did not appear after opening it."
+
+    # WhatsApp can take several seconds before its accessibility tree is ready.
+    for _ in range(6):
+        try:
+            edits = _get_edit_controls(win)
+            search = None
+            for edit in edits:
+                try:
+                    name = (edit.window_text() or "").lower()
+                    aid = (getattr(edit, "automation_id", lambda: "")() or "").lower()
+                    if "search" in name or "search" in aid:
+                        search = edit
+                        break
+                except Exception:
+                    pass
+
+            # If the search box has no accessible name, the first edit is normally it.
+            if search is None and edits:
+                search = edits[0]
+
+            if search is not None and _set_edit_text(search, contact):
+                time.sleep(1.2)
+                if pyautogui:
+                    pyautogui.press("down")
+                    pyautogui.press("enter")
+                time.sleep(1.5)
+                return True, ""
+        except Exception:
+            pass
+        time.sleep(0.7)
+
+    # Keyboard fallback, still against the installed Windows app.
     if pyautogui:
         try:
+            win.set_focus()
             pyautogui.hotkey("ctrl", "f")
             time.sleep(0.5)
             pyautogui.hotkey("ctrl", "a")
             pyautogui.write(contact, interval=0.04)
             time.sleep(1.5)
+            pyautogui.press("down")
             pyautogui.press("enter")
             time.sleep(1.5)
             return True, ""
         except Exception as e:
             return False, str(e)
 
-    return False, "pyautogui is not installed."
+    return False, "Could not access the WhatsApp search box."
+
+
+def _find_message_edit(win):
+    for _ in range(5):
+        try:
+            edits = _get_edit_controls(win)
+            for edit in reversed(edits):
+                try:
+                    name = (edit.window_text() or "").lower()
+                    aid = (getattr(edit, "automation_id", lambda: "")() or "").lower()
+                    if any(x in (name + " " + aid) for x in ("message", "type a message", "compose")):
+                        return edit
+                except Exception:
+                    continue
+            # After a chat is selected, the last Edit is normally the compose box.
+            if len(edits) >= 2:
+                return edits[-1]
+        except Exception:
+            pass
+        time.sleep(0.6)
+    return None
 
 
 def _send_message_desktop(contact, message):
     if not pyautogui:
         return False, "pyautogui is not installed."
 
-    _open_desktop()
-    time.sleep(2.5)
+    if not _open_desktop():
+        return False, "Could not launch the installed WhatsApp desktop app."
+
+    # Do not declare failure while WhatsApp is still starting.
+    win = _focus_whatsapp(timeout=12)
+    if not win:
+        return False, "WhatsApp opened, but its Windows app window was not detected."
 
     ok, error = _click_search_and_find(contact)
     if not ok:
         return False, error
 
-    # Click the actual message compose box exposed by Windows UI Automation.
-    win = _focus_whatsapp()
-    if win:
-        try:
-            edits = win.descendants(control_type="Edit")
-            for edit in reversed(edits):
-                try:
-                    name = (edit.window_text() or "").lower()
-                    if "message" in name or "type a message" in name:
-                        edit.click_input()
-                        edit.set_edit_text(message)
-                        pyautogui.press("enter")
-                        time.sleep(1)
-                        return True, ""
-                except Exception:
-                    continue
-        except Exception:
-            pass
+    win = _focus_whatsapp(timeout=5)
+    if not win:
+        return False, "WhatsApp chat opened, but the desktop window disappeared."
 
-    # Keyboard fallback after the chat is selected.
+    edit = _find_message_edit(win)
+    if edit is not None and _set_edit_text(edit, message):
+        pyautogui.press("enter")
+        time.sleep(0.8)
+        return True, ""
+
+    # Final keyboard fallback. The chat is already selected and focused.
     try:
+        win.set_focus()
         pyautogui.write(message, interval=0.03)
         pyautogui.press("enter")
-        time.sleep(1)
+        time.sleep(0.8)
         return True, ""
     except Exception as e:
         return False, str(e)
@@ -173,12 +203,10 @@ def _send_by_phone(phone, message):
     number = _clean_phone(phone)
     if not number:
         return False, "Invalid phone number."
-
     try:
         uri = "whatsapp://send?phone=" + number + "&text=" + quote(message)
         os.startfile(uri)
         time.sleep(3)
-        # URI opens the chat; press Enter only if the app leaves a confirmation/open state.
         pyautogui.press("enter")
         time.sleep(0.7)
         return True, ""
@@ -187,8 +215,7 @@ def _send_by_phone(phone, message):
 
 
 def _click_call_button(kind: str):
-    """Click an exact WhatsApp desktop call control using Windows UI Automation."""
-    win = _focus_whatsapp()
+    win = _focus_whatsapp(timeout=8)
     if not win:
         return False, "WhatsApp window was not found."
 
@@ -210,7 +237,6 @@ def _click_call_button(kind: str):
     except Exception:
         pass
 
-    # Try Invoke first, then a real input click. Never use a broad "call" substring.
     for control in matches:
         try:
             control.invoke()
@@ -225,50 +251,25 @@ def _click_call_button(kind: str):
         except Exception:
             pass
 
-    return False, (
-        f"WhatsApp exposed no exact {kind} call control to Windows UI Automation. "
-        "No call was reported as started."
-    )
-def whatsapp_advance(
-    action: str,
-    contact: str = "",
-    phone: str = "",
-    message: str = "",
-    confirmation: str = ""
-):
+    return False, f"WhatsApp exposed no exact {kind} call control to Windows UI Automation."
+
+
+def whatsapp_advance(action: str, contact: str = "", phone: str = "", message: str = "", confirmation: str = ""):
     action = (action or "").lower().strip()
 
     if action in ("open", "open_whatsapp"):
         ok = _open_desktop()
         return "Opened the WhatsApp desktop app." if ok else "Could not open the WhatsApp desktop app."
 
-    if action in ("prepare_message", "message", "send", "send_message"):
+    if action in ("prepare_message", "message", "send", "send_message", "send_confirmed", "confirm_and_send"):
         if not contact and not phone:
             return "A WhatsApp contact name or international phone number is required."
         if not message:
             return "The message text is required."
-
         if phone:
             ok, error = _send_by_phone(phone, message)
         else:
             ok, error = _send_message_desktop(contact, message)
-
-        if not ok:
-            return f"WhatsApp send failed: {error}"
-        return f"Sent the WhatsApp message to {contact or phone}."
-
-    if action in ("send_confirmed", "confirm_and_send"):
-        # Kept as a backwards-compatible alias. Confirmation is no longer required.
-        if not contact and not phone:
-            return "A WhatsApp contact name or international phone number is required."
-        if not message:
-            return "The message text is required."
-
-        if phone:
-            ok, error = _send_by_phone(phone, message)
-        else:
-            ok, error = _send_message_desktop(contact, message)
-
         if not ok:
             return f"WhatsApp send failed: {error}"
         return f"Sent the WhatsApp message to {contact or phone}."
@@ -278,8 +279,12 @@ def whatsapp_advance(
         if not target:
             return "A WhatsApp contact name or phone number is required."
 
-        _open_desktop()
-        time.sleep(2.5)
+        if not _open_desktop():
+            return "Could not open the WhatsApp desktop app."
+        time.sleep(1.5)
+        win = _focus_whatsapp(timeout=10)
+        if not win:
+            return "WhatsApp opened, but its Windows app window was not detected yet."
 
         if contact:
             ok, error = _click_search_and_find(contact)
@@ -294,55 +299,30 @@ def whatsapp_advance(
 
         kind = "video" if action == "video_call" else "voice"
         ok, error = _click_call_button(kind)
-
         if ok:
             return f"Triggered the WhatsApp {kind} call control for {target}."
+        return f"Opened WhatsApp to {target}, but I could not trigger the {kind} call control. {error}"
 
-        return (
-            f"Opened WhatsApp to {target}, but I could not trigger the {kind} call control. "
-            f"No call was reported as started. {error}"
-        )
-
-    return (
-        "Unknown action. Use open_whatsapp, message, send, call, or video_call."
-    )
+    return "Unknown action. Use open_whatsapp, message, send, call, or video_call."
 
 
 TOOL = {
     "name": "whatsapp_advance",
     "description": (
-        "Control the INSTALLED WINDOWS WHATSAPP DESKTOP APP ONLY. Never use WhatsApp Web. "
-        "When the user explicitly asks to message, call, or video call a WhatsApp contact, "
-        "perform the action directly without asking for a confirmation step. For messages, "
-        "find the contact, open the chat, type the message, and press Enter. For voice/video "
-        "calls, find the contact and use Windows UI Automation to click the matching call "
-        "button automatically. Do not tell the user to press the call button manually unless "
-        "UI Automation genuinely cannot find the button. send_confirmed remains as a backwards-"
-        "compatible alias but does not require confirmation."
+        "Control the installed WINDOWS WhatsApp desktop app only. Never use WhatsApp Web. "
+        "For a normal WhatsApp message, find the contact, open the chat, type the message, "
+        "and press Enter automatically. Do not ask for confirmation. Wait for the WhatsApp "
+        "desktop window to finish opening before searching. Calls and video calls should also "
+        "be triggered automatically through Windows UI Automation."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "action": {
-                "type": "STRING",
-                "description": "open_whatsapp, prepare_message, send_confirmed, call, or video_call",
-            },
-            "contact": {
-                "type": "STRING",
-                "description": "WhatsApp contact name, for example Nived",
-            },
-            "phone": {
-                "type": "STRING",
-                "description": "International phone number, for example 919876543210",
-            },
-            "message": {
-                "type": "STRING",
-                "description": "Message text",
-            },
-            "confirmation": {
-                "type": "STRING",
-                "description": "Use yes/confirm only after explicit user confirmation.",
-            },
+            "action": {"type": "STRING", "description": "open_whatsapp, message, send, call, or video_call"},
+            "contact": {"type": "STRING", "description": "WhatsApp contact name"},
+            "phone": {"type": "STRING", "description": "International phone number"},
+            "message": {"type": "STRING", "description": "Message text"},
+            "confirmation": {"type": "STRING", "description": "Legacy field, not required"},
         },
         "required": ["action"],
     },
