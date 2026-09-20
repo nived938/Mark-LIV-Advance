@@ -547,6 +547,9 @@ class JarvisLive:
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
         self._interrupted          = False   # True while draining audio after user interrupt
+        self._shutdown_requested   = False   # True after the UI/process is explicitly closing
+        self._run_task              = None   # asyncio task running the session supervisor
+        self._active_tool_tasks     = set() # child tasks cancellable by user interruption
         # Transcript-driven mouth shapes for the avatar. Fed from the receive
         # loop as words arrive, drained by the playback loop against the audio.
         self._visemes              = VisemeStream()
@@ -574,6 +577,7 @@ class JarvisLive:
         self.ui.on_text_command   = self._on_text_command
         self.ui.on_remote_clicked = self._make_remote_key
         self.ui.on_interrupt      = self.interrupt
+        self.ui.on_close          = self.request_shutdown
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
         self.ui.on_audio_device_change = self._on_audio_device_change
         self._reconnect_event: asyncio.Event | None = None
@@ -772,6 +776,49 @@ class JarvisLive:
         except Exception as e:
             print(f"[PluginSay] {e}")
 
+    def _cancel_active_tools(self) -> None:
+        """Cancel active async tools and cooperative local searches."""
+        for task in list(self._active_tool_tasks):
+            try:
+                task.cancel()
+            except Exception:
+                pass
+        try:
+            from actions.file_search_advance import cancel_file_search
+            cancel_file_search()
+        except Exception:
+            pass
+        try:
+            from core.mark32_engine import ENGINE
+            ENGINE.cancel_all()
+        except Exception:
+            pass
+
+    def request_shutdown(self) -> None:
+        """Gracefully stop the Live supervisor before Qt/Python exits."""
+        if self._shutdown_requested:
+            return
+        self._shutdown_requested = True
+        self._cancel_active_tools()
+        try:
+            if self._whatsapp_incoming_agent is not None:
+                self._whatsapp_incoming_agent.stop()
+        except Exception:
+            pass
+        loop = getattr(self, "_loop", None)
+        if loop and not loop.is_closed():
+            def _cancel_run():
+                task = self._run_task
+                if task is not None and not task.done():
+                    task.cancel()
+            try:
+                loop.call_soon_threadsafe(_cancel_run)
+            except Exception:
+                pass
+        try:
+            self.ui.write_log("SYS: JARVIS shutting down.")
+        except Exception:
+            pass
     def request_reconnect(self, keep_context: bool = True, reason: str = ""):
         """Thread-safe: ask the run loop to tear down and rebuild the Live
         session. Called from the Qt thread. No-op until the async loop and
@@ -959,8 +1006,9 @@ class JarvisLive:
             pass
 
     def interrupt(self) -> None:
-        """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
+        """Stop speech and cancel the currently-running tool turn."""
         self._interrupted = True
+        self._cancel_active_tools()
         q = self.audio_in_queue
         if q:
             drained = 0
