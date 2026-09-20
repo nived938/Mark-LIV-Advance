@@ -1,0 +1,172 @@
+{
+  "source_repository": "https://github.com/public-apis/public-apis",
+  "source_branch": "master",
+  "last_reviewed": "2026-09-20",
+  "selection_note": "Selected for J.A.R.V.I.S. usefulness, HTTPS support, and low/no credential friction where possible.",
+  "apis": [
+    {
+      "id": "open_meteo",
+      "name": "Open-Meteo",
+      "category": "weather",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://api.open-meteo.com/v1/forecast"
+    },
+    {
+      "id": "nominatim",
+      "name": "Nominatim",
+      "category": "geocoding",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://nominatim.openstreetmap.org/search"
+    },
+    {
+      "id": "ipinfo",
+      "name": "IPinfo",
+      "category": "ip-geolocation",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://ipinfo.io/{ip}/json"
+    },
+    {
+      "id": "sunrise_sunset",
+      "name": "Sunrise and Sunset",
+      "category": "astronomy",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://api.sunrise-sunset.org/json"
+    },
+    {
+      "id": "frankfurter",
+      "name": "Frankfurter",
+      "category": "currency",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://api.frankfurter.dev/v2/rate/{base}/{quote}"
+    },
+    {
+      "id": "wttr_in",
+      "name": "wttr.in",
+      "category": "weather",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://wttr.in/{location}?format=j1"
+    },
+    {
+      "id": "rainviewer",
+      "name": "RainViewer",
+      "category": "weather-radar",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://api.rainviewer.com/public/weather-maps.json"
+    },
+    {
+      "id": "nasa",
+      "name": "NASA",
+      "category": "science",
+      "auth": "DEMO_KEY",
+      "https": true,
+      "endpoint": "https://api.nasa.gov/planetary/apod"
+    },
+    {
+      "id": "open_library",
+      "name": "Open Library",
+      "category": "books",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://openlibrary.org/search.json"
+    },
+    {
+      "id": "free_dictionary",
+      "name": "Free Dictionary",
+      "category": "dictionary",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
+    },
+    {
+      "id": "jikan",
+      "name": "Jikan",
+      "category": "anime",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://api.jikan.moe/v4/anime"
+    },
+    {
+      "id": "kroki",
+      "name": "Kroki",
+      "category": "diagrams",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://kroki.io/mermaid/svg/{encoded_diagram}"
+    },
+    {
+      "id": "jsonplaceholder",
+      "name": "JSONPlaceholder",
+      "category": "testing",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://jsonplaceholder.typicode.com/posts"
+    },
+    {
+      "id": "aviation_weather",
+      "name": "AviationWeather",
+      "category": "aviation",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://aviationweather.gov/api/data/metar"
+    },
+    {
+      "id": "swapi",
+      "name": "SWAPI",
+      "category": "reference",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://swapi.dev/api/people/"
+    },
+    {
+      "id": "crossref",
+      "name": "Crossref Metadata Search",
+      "category": "research",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://api.crossref.org/works"
+    },
+    {
+      "id": "gutendex",
+      "name": "Gutendex",
+      "category": "books",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://gutendex.com/books/"
+    },
+    {
+      "id": "hacker_news",
+      "name": "HackerNews",
+      "category": "technology-news",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://hacker-news.firebaseio.com/v0/topstories.json"
+    },
+    {
+      "id": "musicbrainz",
+      "name": "MusicBrainz",
+      "category": "music",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://musicbrainz.org/ws/2/artist"
+    },
+    {
+      "id": "openligadb",
+      "name": "OpenLigaDB",
+      "category": "sports",
+      "auth": "none",
+      "https": true,
+      "endpoint": "https://api.openligadb.de/getmatchdata/{league}/{season}"
+    }
+  ],
+  "credentials": {
+    "note": "The selected integrations are keyless except NASA, which is currently called with DEMO_KEY. Do not put private API keys in this file.",
+    "private_keys_file": "config/api_keys.json"
+  }
+}
