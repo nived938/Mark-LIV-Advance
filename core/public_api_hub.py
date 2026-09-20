@@ -22,28 +22,19 @@ _MUSICBRAINZ_LOCK = __import__("threading").Lock()
 _MUSICBRAINZ_LAST = 0.0
 
 
-API_CATALOG = [
-    {"name": "open_meteo", "title": "Open-Meteo", "purpose": "global weather forecasts", "auth": "none", "https": True},
-    {"name": "nominatim", "title": "Nominatim", "purpose": "forward/reverse geocoding", "auth": "none", "https": True},
-    {"name": "ipinfo", "title": "IPinfo", "purpose": "IP address and approximate geolocation", "auth": "none", "https": True},
-    {"name": "sunrise_sunset", "title": "Sunrise and Sunset", "purpose": "sunrise and sunset times", "auth": "none", "https": True},
-    {"name": "frankfurter", "title": "Frankfurter", "purpose": "currency conversion and exchange rates", "auth": "none", "https": True},
-    {"name": "wttr_in", "title": "wttr.in", "purpose": "weather and terminal-friendly forecasts", "auth": "none", "https": True},
-    {"name": "rainviewer", "title": "RainViewer", "purpose": "weather radar map data", "auth": "none", "https": True},
-    {"name": "nasa", "title": "NASA", "purpose": "NASA science and imagery", "auth": "none/DEMO_KEY", "https": True},
-    {"name": "open_library", "title": "Open Library", "purpose": "books and book metadata", "auth": "none", "https": True},
-    {"name": "free_dictionary", "title": "Free Dictionary", "purpose": "definitions and pronunciations", "auth": "none", "https": True},
-    {"name": "jikan", "title": "Jikan", "purpose": "MyAnimeList anime data", "auth": "none", "https": True},
-    {"name": "kroki", "title": "Kroki", "purpose": "diagram rendering", "auth": "none", "https": True},
-    {"name": "jsonplaceholder", "title": "JSONPlaceholder", "purpose": "safe API testing", "auth": "none", "https": True},
-    {"name": "aviation_weather", "title": "AviationWeather", "purpose": "aviation METAR/TAF weather", "auth": "none", "https": True},
-    {"name": "swapi", "title": "SWAPI", "purpose": "Star Wars data", "auth": "none", "https": True},
-    {"name": "crossref", "title": "Crossref Metadata Search", "purpose": "scholarly article and book metadata", "auth": "none", "https": True},
-    {"name": "gutendex", "title": "Gutendex", "purpose": "Project Gutenberg books", "auth": "none", "https": True},
-    {"name": "hacker_news", "title": "HackerNews", "purpose": "technology and startup news", "auth": "none", "https": True},
-    {"name": "musicbrainz", "title": "MusicBrainz", "purpose": "music artist/release metadata", "auth": "none", "https": True},
-    {"name": "openligadb", "title": "OpenLigaDB", "purpose": "football league and match data", "auth": "none", "https": True},
-]
+_CATALOG_FILE = __import__("pathlib").Path(__file__).resolve().parent.parent / "config" / "public_apis.json"
+
+def _load_catalog() -> list[dict]:
+    try:
+        data = json.loads(_CATALOG_FILE.read_text(encoding="utf-8"))
+        rows = data.get("apis") if isinstance(data, dict) else None
+        if isinstance(rows, list) and rows:
+            return rows
+    except Exception:
+        pass
+    return []
+
+API_CATALOG = _load_catalog()
 
 
 def _get(url: str, params: dict | None = None):
