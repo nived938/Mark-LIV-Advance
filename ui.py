@@ -3230,6 +3230,7 @@ class MainWindow(QMainWindow):
     _camera_sig     = pyqtSignal(bytes)      # show camera frame preview (small overlay)
     _cam_stream_sig = pyqtSignal(bool)       # True=start live stream, False=stop
     _cam_frame_sig  = pyqtSignal(bytes)      # live camera frame → HUD area
+    _cam_control_sig = pyqtSignal(bool)
     _clipboard_sig  = pyqtSignal(str)        # clipboard text changed (thread-safe)
     _confirm_sig    = pyqtSignal(str, str)   # (title, detail) — irreversible-action gate
     _confirm_hide_sig = pyqtSignal()
@@ -3409,6 +3410,7 @@ class MainWindow(QMainWindow):
         self._confirm_hide_sig.connect(self._hide_confirm_banner)
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
+        self._cam_control_sig.connect(self._apply_camera_control)
         self._clipboard_sig.connect(self._show_clipboard_panel)
         self._wake_dl_sig.connect(self._on_wake_install_done)
         self._quiz_sig.connect(self._show_quiz)
@@ -3534,13 +3536,24 @@ class MainWindow(QMainWindow):
                 )
 
     def start_camera_stream(self) -> None:
-        if not self._cam_stop.is_set():
-            # Already streaming; do not open the physical webcam a second time.
-            return
-        self._cam_stop.clear()
-        self._cam_stream_sig.emit(True)
-        t = threading.Thread(target=self._cam_loop, daemon=True, name="cam-stream")
-        t.start()
+        """Thread-safe request to start the embedded camera stream."""
+        self._cam_control_sig.emit(True)
+
+    def stop_camera_stream(self) -> None:
+        """Thread-safe request to stop the embedded camera stream."""
+        self._cam_control_sig.emit(False)
+
+    def _apply_camera_control(self, start: bool) -> None:
+        if start:
+            if not self._cam_stop.is_set():
+                return
+            self._latest_cam_frame = None
+            self._cam_stop.clear()
+            self._cam_stream_sig.emit(True)
+            t = threading.Thread(target=self._cam_loop, daemon=True, name="cam-stream")
+            t.start()
+        else:
+            self._cam_stop.set()
 
     def _cam_loop(self) -> None:
         try:
@@ -3592,6 +3605,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[Camera] Save error: {e}")
         return None
+
+    def get_latest_camera_frame(self) -> bytes | None:
+        with self._camera_stream_lock:
+            return bytes(self._latest_cam_frame) if self._latest_cam_frame else None
+
+    def camera_stream_active(self) -> bool:
+        return not self._cam_stop.is_set()
 
     def stop_camera_stream(self) -> None:
         self._cam_stop.set()
@@ -6094,6 +6114,12 @@ class JarvisUI:
     def stop_camera_stream(self) -> None:
         """Thread-safe: stop the live camera feed."""
         self._win.stop_camera_stream()
+
+    def get_latest_camera_frame(self) -> bytes | None:
+        return self._win.get_latest_camera_frame()
+
+    def camera_stream_active(self) -> bool:
+        return self._win.camera_stream_active()
 
     def show_map(self, url: str) -> None:
         """Thread-safe: open an embedded map/location webview with no address bar."""
