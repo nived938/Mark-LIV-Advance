@@ -194,6 +194,59 @@ def qcol(h: str, a: int = 255) -> QColor:
     c = QColor(h); c.setAlpha(a); return c
 
 
+# Operating-mode theme state. Normal/Gaming retain the user's selected accent;
+# Serious mode temporarily replaces the accent-linked palette with a red danger
+# palette and restores the exact previous palette when Serious mode ends.
+_SERIOUS_MODE_ACTIVE = False
+_NORMAL_MODE_PALETTE: dict[str, str] | None = None
+
+
+def set_operating_mode_theme(mode: str) -> None:
+    """Apply or remove the live Serious-mode danger theme."""
+    global _SERIOUS_MODE_ACTIVE, _NORMAL_MODE_PALETTE
+
+    value = str(mode or "normal").strip().lower()
+    app = QApplication.instance()
+
+    if value == "serious" and not _SERIOUS_MODE_ACTIVE:
+        _NORMAL_MODE_PALETTE = current_palette()
+        old = current_palette()
+        # The palette generator preserves the HUD's existing contrast ratios
+        # while shifting the hue family to a strong red/danger tone.
+        apply_ui_accent("#ff2448")
+        new = current_palette()
+        _SERIOUS_MODE_ACTIVE = True
+        retheme_all_widgets(old, new)
+        if app is not None:
+            for widget in app.allWidgets():
+                try:
+                    widget.setProperty("seriousMode", True)
+                    widget.style().unpolish(widget)
+                    widget.style().polish(widget)
+                    widget.update()
+                except Exception:
+                    pass
+        return
+
+    if value != "serious" and _SERIOUS_MODE_ACTIVE:
+        old = current_palette()
+        target = _NORMAL_MODE_PALETTE or _PALETTE_DEFAULTS.copy()
+        for key, color in target.items():
+            setattr(C, key, color)
+        _SERIOUS_MODE_ACTIVE = False
+        _NORMAL_MODE_PALETTE = None
+        retheme_all_widgets(old, target)
+        if app is not None:
+            for widget in app.allWidgets():
+                try:
+                    widget.setProperty("seriousMode", False)
+                    widget.style().unpolish(widget)
+                    widget.style().polish(widget)
+                    widget.update()
+                except Exception:
+                    pass
+
+
 # ── Windows GPU via NVML DLL (no subprocess, no console window) ──────────────
 _nvml_lib: object = None   # cached ctypes DLL
 _nvml_ok:  object = None   # None=untested, True=works, False=unavailable
@@ -3819,13 +3872,33 @@ class MainWindow(QMainWindow):
 
     def set_mode_display(self, mode: str) -> None:
         mode = str(mode or "normal").strip().lower()
-        labels = {"normal": ("MODE  NORMAL", C.TEXT_MED),
-                  "gaming": ("MODE  GAMING", C.GREEN),
-                  "serious": ("MODE  SERIOUS", C.RED)}
+        # Serious mode changes the whole interface palette, not only this label.
+        set_operating_mode_theme(mode)
+
+        labels = {
+            "normal": ("MODE  NORMAL", C.TEXT_MED),
+            "gaming": ("MODE  GAMING", C.GREEN),
+            "serious": ("⚠  SERIOUS MODE", C.RED),
+        }
         text, color = labels.get(mode, ("MODE  NORMAL", C.TEXT_MED))
         if hasattr(self, "_mode_lbl"):
             self._mode_lbl.setText(text)
-            self._mode_lbl.setStyleSheet(f"color: {color}; background: transparent;")
+            if mode == "serious":
+                self._mode_lbl.setStyleSheet(
+                    f"color: {C.RED}; background: #2a060c; "
+                    f"border: 1px solid {C.RED}; border-radius: 3px; "
+                    f"padding: 2px 6px;"
+                )
+                self._mode_lbl.setToolTip(
+                    "DANGER: Serious mode is active. Autonomous Mark32 operations are enabled."
+                )
+            else:
+                self._mode_lbl.setStyleSheet(
+                    f"color: {color}; background: transparent; border: none; padding: 0;"
+                )
+                self._mode_lbl.setToolTip(
+                    "Current operating mode: " + mode
+                )
 
     def _tick_clock(self):
         self._clock_lbl.setText(time.strftime("%H:%M:%S"))
