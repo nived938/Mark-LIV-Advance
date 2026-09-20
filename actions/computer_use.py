@@ -37,7 +37,7 @@ def _json(text: str):
     try: return json.loads(m.group(0))
     except Exception: return None
 
-_ALLOWED = {"click","double_click","right_click","type","smart_type","hotkey","press","scroll","wait","screen_click","focus_window"}
+_ALLOWED = {"click","double_click","right_click","type","smart_type","hotkey","press","key","scroll","wait","screen_click","focus_window"}
 
 def _decide(goal, history, image, width, height, window):
     prompt = """You are JARVIS Computer Use controlling a real Windows desktop.
@@ -73,6 +73,7 @@ Return ONLY JSON: {"verified":true|false,"evidence":"short concrete evidence"}""
 
 def _execute(step):
     action = str(step.get("action","")).lower().strip()
+    if action == "key": action = "press"
     if action not in _ALLOWED: return f"Rejected action: {action}"
     p = dict(step.get("parameters") or {}); p["action"] = action
     if action in {"click","double_click","right_click"} and pyautogui is not None:
@@ -124,7 +125,7 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
 
 TOOL = {
     "name":"computer_use",
-    "description":"Autonomous whole-PC UI agent. Observe the desktop, operate visible Windows apps with mouse/keyboard, re-observe, recover, and verify. Use for multi-step application tasks such as VS Code, Unity, Blender, WhatsApp, Settings, and File Explorer. Do not substitute terminal commands when the user asks to operate an app.",
+    "description":"PRIMARY TOOL FOR MULTI-STEP DESKTOP TASKS. Use this tool whenever the user asks JARVIS to operate an application or the Windows GUI across multiple steps: open/launch an app AND then click, type, create, edit, navigate, save, configure, or verify something in it. Examples: 'Open VS Code and create main.py', 'open Blender and make...', 'open WhatsApp and send...', 'open Settings and change...'. Pass the COMPLETE user goal unchanged in goal. Do NOT split such tasks between open_app, file_controller, terminal_advance, or computer_control. Observe the real screen, operate visible UI, re-observe, recover, and verify. Do not substitute terminal commands for GUI actions.",
     "parameters":{"type":"OBJECT","properties":{"goal":{"type":"STRING","description":"Complete user goal to accomplish through the desktop UI."},"max_steps":{"type":"INTEGER","description":"Maximum UI actions, default 12, maximum 30."},"verify_every":{"type":"INTEGER","description":"Verify progress every N actions, default 2."}},"required":["goal"]},
     "handler":computer_use,
 }
