@@ -183,10 +183,28 @@ class WhatsAppIncomingAgent:
             # WhatsApp's incoming-call UI is a native dialog and exposes
             # Accept/Decline controls. Checking the controls prevents the main
             # WhatsApp window from being mistaken for a call.
-            if "whatsapp" not in low_title and "whatsapp" not in self._norm(self._safe_id(window)):
-                # Still inspect short native dialogs: WhatsApp's call window
-                # title may be just the caller name on some builds.
-                pass
+            whatsapp_window = "whatsapp" in low_title or "whatsapp" in self._norm(self._safe_id(window))
+            if not whatsapp_window and psutil is not None:
+                try:
+                    process_name = psutil.Process(window.process_id()).name().lower()
+                    whatsapp_window = "whatsapp" in process_name
+                except Exception:
+                    pass
+            if not whatsapp_window:
+                # Some builds title the native call dialog with the caller name.
+                # In that case require WhatsApp text somewhere in the fresh UIA
+                # tree before accepting the window as a call.
+                try:
+                    sample = " ".join(
+                        self._safe_text(x).lower()
+                        for x in window.descendants()
+                        if self._safe_text(x)
+                    )
+                    whatsapp_window = "whatsapp" in sample
+                except Exception:
+                    whatsapp_window = False
+            if not whatsapp_window:
+                continue
             accept, decline = self._find_buttons(window)
             if accept is None or decline is None:
                 continue
