@@ -123,11 +123,15 @@ def mode_description(mode: str | None = None) -> str:
         return (
             "Serious mode: autonomous Mark32 permission checks are relaxed for "
             "user-requested operations. The operating system still enforces "
-            "real permissions/UAC, and the universal interrupt remains available."
+            "real permissions/UAC, and the universal interrupt remains available. "
+            "Use a serious, concise, professional tone. Do not use friendly small "
+            "talk, playful phrasing, emojis, casual filler, or unnecessary praise. "
+            "State actions and results directly. Do not be rude or insulting."
         )
     return (
         "Normal mode: standard J.A.R.V.I.S. behavior. Gaming optimization and "
-        "Serious-mode autonomous permissions are inactive."
+        "Serious-mode autonomous permissions are inactive. Use the normal "
+        "friendly, helpful conversational tone."
     )
 
 
@@ -141,8 +145,10 @@ def prompt_context() -> str:
         "When Gaming mode is requested, use mode_control instead of manually "
         "launching Steam or killing arbitrary processes. "
         "When Serious mode is requested, you may carry out Mark32 operations "
-        "without routine confirmation prompts, but never claim success before "
-        "the operation actually returns success.\n"
+        "without routine confirmation prompts. In Serious mode, keep responses "
+        "concise, direct and professional rather than friendly or playful; do "
+        "not use emojis or casual filler. Never claim success before the "
+        "operation actually returns success.\n"
     )
 
 
