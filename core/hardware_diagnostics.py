@@ -112,5 +112,4 @@ def diagnostic_report(deep: bool = False) -> str:
             lines.append("SMART: smartctl is not installed; skipped.")
 
     lines.append("Diagnostic collection complete. No stress test was run.")
-    return "
-".join(lines)
+    return "\n".join(lines)
