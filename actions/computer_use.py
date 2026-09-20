@@ -40,17 +40,23 @@ def _json(text: str):
 _ALLOWED = {"click","double_click","right_click","type","smart_type","hotkey","press","key","scroll","wait","screen_click","focus_window"}
 
 def _decide(goal, history, image, width, height, window):
-    prompt = """You are JARVIS Computer Use controlling a real Windows desktop.
+    title = window.get("title", "")
+    recent = json.dumps(history[-6:], ensure_ascii=False)
+    prompt = f"""You are JARVIS Computer Use controlling a real Windows desktop.
 USER GOAL:
 {goal}
 ACTIVE WINDOW: {title}
 SCREEN: {width}x{height}
-RECENT ACTIONS: {history}
+RECENT ACTIONS: {recent}
 Inspect the screenshot and choose exactly ONE next UI action.
 Use visible UI coordinates, not guessed coordinates. Prefer keyboard shortcuts when reliable.
-Do not use terminal commands as a substitute for GUI interaction. Do not claim success without verification.
+Do not use terminal commands as a substitute for GUI interaction.
+Do not claim success without verification.
+The screenshot is the source of truth: only act on controls you can actually see.
+When a dialog, menu, editor, or file tree appears, re-observe it before acting.
 If the goal is visibly complete, return done.
-Return ONLY JSON: {"action":"click|double_click|right_click|type|smart_type|hotkey|press|scroll|wait|screen_click|focus_window|done","parameters":{},"reason":"short reason"}""".format(goal=goal,title=window.get("title",""),width=width,height=height,history=json.dumps(history[-6:]))
+Return ONLY JSON:
+{{"action":"click|double_click|right_click|type|smart_type|hotkey|press|scroll|wait|screen_click|focus_window|done","parameters":{{}},"reason":"short reason"}}"""
     try:
         from google.genai import types as gtypes
         r = gemini.call([gtypes.Part.from_bytes(data=image, mime_type="image/png"), prompt], tier=gemini.FAST, timeout_ms=20000)
@@ -59,11 +65,17 @@ Return ONLY JSON: {"action":"click|double_click|right_click|type|smart_type|hotk
         print(f"[ComputerUse] decision failed: {exc}"); return None
 
 def _verify(goal, history, image, width, height, window):
-    prompt = """Verify whether the Windows desktop actually completed this goal.
+    title = window.get("title", "")
+    recent = json.dumps(history[-10:], ensure_ascii=False)
+    prompt = f"""Verify whether the Windows desktop actually completed this goal.
 GOAL: {goal}
 ACTIVE WINDOW: {title}
-ACTIONS: {history}
-Return ONLY JSON: {"verified":true|false,"evidence":"short concrete evidence"}""".format(goal=goal,title=window.get("title",""),history=json.dumps(history[-10:]))
+ACTIONS: {recent}
+Use the screenshot as the source of truth.
+For this task, completion requires every requested visible result to exist, not merely that an app was opened.
+Do not infer completion from the action history alone.
+Return ONLY JSON:
+{{"verified":true|false,"evidence":"short concrete evidence"}}"""
     try:
         from google.genai import types as gtypes
         r = gemini.call([gtypes.Part.from_bytes(data=image, mime_type="image/png"), prompt], tier=gemini.FAST, timeout_ms=20000)
@@ -93,11 +105,25 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
     if m:
         app_name = m.group(1).strip().strip(" .")
         if app_name:
-            launch_result = open_app({"app_name": app_name})
-            history.append({"step":"0","action":"open_app","result":launch_result[:500]})
-            if "Could not confirm" in launch_result or "Failed to open" in launch_result:
-                print(f"[ComputerUse] App launch was not confirmed: {launch_result}")
-            time.sleep(1.0)
+            active_title = _window().get("title", "").lower()
+            app_low = app_name.lower()
+            already_active = (
+                ("visual studio code" in active_title or active_title.endswith(" - code")) and
+                app_low in {"vs code", "vscode", "visual studio code", "code"}
+            ) or app_low in active_title
+            if already_active:
+                history.append({
+                    "step":"0",
+                    "action":"open_app",
+                    "result":f"{app_name} already active; launch skipped"
+                })
+                print(f"[ComputerUse] {app_name} already active; skipping duplicate launch.")
+            else:
+                launch_result = open_app({"app_name": app_name})
+                history.append({"step":"0","action":"open_app","result":launch_result[:500]})
+                if "Could not confirm" in launch_result or "Failed to open" in launch_result:
+                    print(f"[ComputerUse] App launch was not confirmed: {launch_result}")
+                time.sleep(1.0)
     for n in range(1,max_steps+1):
         try: image,width,height=_screen()
         except Exception as exc: return f"Computer-use failed to capture desktop: {exc}"
