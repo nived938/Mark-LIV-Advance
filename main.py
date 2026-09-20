@@ -35,6 +35,7 @@ for _stream in ("stdout", "stderr"):
 # ─────────────────────────────────────────────────────────────────────────────
 
 import asyncio
+import concurrent.futures
 import re
 import threading
 import time
@@ -2087,8 +2088,22 @@ class JarvisLive:
 
     # ── main loop ───────────────────────────────────────────────────────────
 
+    def _ensure_async_executor(self) -> None:
+        """Keep reconnects alive even if a cancelled task shut down asyncio's default executor."""
+        loop = self._loop
+        current = getattr(loop, "_default_executor", None)
+        if current is not None and not getattr(current, "_shutdown", False):
+            return
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(4, min(16, (os.cpu_count() or 4) * 2)),
+            thread_name_prefix="jarvis-worker",
+        )
+        loop.set_default_executor(executor)
+        self._mark32_executor = executor
+
     async def run(self):
         self._loop = asyncio.get_event_loop()
+        self._ensure_async_executor()
         self._reconnect_event = asyncio.Event()
 
         # ── Wire the shared core services to the interface ───────────────────
@@ -2135,6 +2150,7 @@ class JarvisLive:
 
         while True:
             try:
+                self._ensure_async_executor()
                 print("[JARVIS] Connecting...")
                 self.ui.set_state("THINKING")
                 _resumed_with = self._resume_handle is not None
