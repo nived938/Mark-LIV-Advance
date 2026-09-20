@@ -107,26 +107,9 @@ def massivemusic_api(
             },
         )
 
-    if action == "track_preview_url":
-        if not track_id:
-            return "track_id is required."
-        url = (
-            f"https://previews.7digital.com/clip/{int(track_id)}"
-            f"?oauth_consumer_key={_KEY}&country={cc}"
-        )
-        return json.dumps(
-            {
-                "trackId": int(track_id),
-                "previewUrl": url,
-                "note": "Preview URLs are temporary and should not be stored for reuse.",
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-
     return (
         "Unknown action. Use track_search, artist_search, artist_details, "
-        "release_details, or track_preview_url."
+        "release_details."
     )
 
 
@@ -144,7 +127,7 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "track_search | artist_search | artist_details | release_details | track_preview_url",
+                "description": "track_search | artist_search | artist_details | release_details",
             },
             "query": {"type": "STRING", "description": "Track or artist search text"},
             "artist_id": {"type": "INTEGER", "description": "MassiveMusic artist ID"},
