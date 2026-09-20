@@ -67,6 +67,7 @@ from actions.proactive         import ProactiveEngine
 from actions.background_monitor import (
     add_monitor, remove_monitor, list_monitors, check_all as monitor_check_all,
 )
+from actions.whatsapp_incoming_agent import start_incoming_call_agent
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import (
     get_brief_enabled, get_media_resolution, get_proactive_audio_enabled,
@@ -598,6 +599,7 @@ class JarvisLive:
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
+        self._whatsapp_incoming_agent = None       # Windows WhatsApp incoming-call monitor
 
         self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
         self._tuned_live    = True  # turn-taking / media / thinking knobs; same fallback
@@ -827,6 +829,45 @@ class JarvisLive:
         url    = self._dashboard.get_url()
         manual = self._dashboard.get_manual_url()
         return url, key, f"{url}/auto-login?key={key}", manual
+
+    def _on_whatsapp_incoming_call(self, call) -> None:
+        """Announce a native Windows WhatsApp incoming call and wait for the user."""
+        caller = getattr(call, "caller", "someone") or "someone"
+        self.ui.write_log(f"SYS: Incoming WhatsApp call from {caller}.")
+        loop = getattr(self, "_loop", None)
+        if not loop or not self.session:
+            print(f"[WhatsAppAgent] Call from {caller} detected before the Live session was ready.")
+            return
+
+        async def _announce():
+            try:
+                await self.session.send_client_content(
+                    turns={
+                        "role": "user",
+                        "parts": [{
+                            "text": (
+                                "[WHATSAPP_INCOMING_CALL]\n"
+                                f"A native Windows WhatsApp incoming call is ringing from {caller}. "
+                                "The call is still pending. Speak to the user immediately: "
+                                f"Incoming WhatsApp call from {caller}. Should I accept or decline? "
+                                "Do not accept or decline it yourself. Wait for the user's answer. "
+                                "If the user says accept, call whatsapp_advance with action='accept_incoming'. "
+                                "If the user says decline, call action='decline_incoming'. "
+                                "If they ask to decline and send a message, pass that message in the "
+                                "message parameter. If they ask to accept and send a message, pass it "
+                                "in message."
+                            )
+                        }],
+                    },
+                    turn_complete=True,
+                )
+            except Exception as exc:
+                print(f"[WhatsAppAgent] Could not announce incoming call: {exc}")
+
+        try:
+            asyncio.run_coroutine_threadsafe(_announce(), loop)
+        except Exception as exc:
+            print(f"[WhatsAppAgent] Announcement scheduling failed: {exc}")
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
@@ -2077,6 +2118,16 @@ class JarvisLive:
         except Exception as e:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
+
+        # Windows WhatsApp incoming-call agent. It watches the native desktop
+        # call dialog in a daemon thread and never uses WhatsApp Web.
+        try:
+            self._whatsapp_incoming_agent = start_incoming_call_agent(
+                self._on_whatsapp_incoming_call
+            )
+        except Exception as e:
+            print(f"[WhatsAppAgent] Disabled: {e}")
+            self._whatsapp_incoming_agent = None
 
         while True:
             try:
