@@ -289,6 +289,11 @@ def _render_prompt(template: str, values: dict) -> str:
 
 
 def _get_api_key() -> str:
+    # .env is the preferred local secret store; keep the legacy JSON fallback
+    # so existing installations continue working without migration.
+    env_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if env_key:
+        return env_key
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
 
