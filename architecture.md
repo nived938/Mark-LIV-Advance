@@ -76,7 +76,7 @@ The UI wrapper is a public contract. New UI capabilities used from main.py must 
 MainWindow owns all Qt widgets and Qt-thread-only state:
 
 - left system monitor
-- floating TASK TERMINAL inside the Arc Core/HUD
+- task terminal inside the Arc Core/HUD, shown only while a long-running task is active
 - central animated HUD
 - camera feed
 - content/quiz/review panels
@@ -243,7 +243,7 @@ An interrupt stops the current operation. Shutdown stops the application infrast
 
 ## 10. Long-Running Task Observability
 
-Slow operations should expose progress in the floating TASK TERMINAL inside the Arc Core/HUD. The terminal remains visible while the normal Arc Core/HUD is shown and is hidden when the full live camera feed replaces that surface.
+Slow operations should expose progress in the floating TASK TERMINAL inside the Arc Core/HUD. The terminal is hidden while idle. main.py shows it only for tools classified as long-running, then hides it on completion or error. Interrupt and shutdown also hide it immediately. It is hidden when the full live camera feed replaces the Arc Core surface.
 
 File search currently reports phases such as:
 
