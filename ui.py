@@ -446,10 +446,9 @@ class HudCanvas(QWidget):
         self._tmr.start(16)
 
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
-        """Ask the avatar to look somewhere for a moment (see HoloAvatar.glance)."""
+        """Ask the live HUD avatar to look somewhere for a moment."""
         try:
-            if self._avatar is not None:
-                self._avatar.glance(dx, dy, hold)
+            self._win.hud.glance(dx, dy, hold)
         except Exception:
             pass
 
@@ -2968,6 +2967,9 @@ class MainWindow(QMainWindow):
         self.get_plugin_settings = None # callable: () -> list[dict] settings schemas, set by JarvisLive
         self.on_wake_toggle    = None   # callable: (enable: bool) -> str, set by JarvisLive
         self.on_wake_manual    = None   # callable: () -> None — manual sleep/wake
+        self.on_wake_install   = None   # callable: () -> (ok, msg) — wake-word installer
+        self.wake_is_ready     = None   # callable: () -> bool — wake-word readiness probe
+        self.request_say       = None   # callable: (instruction: str) -> None — plugin speech channel
         self.on_push_to_talk   = None   # callable: (enable: bool) -> str scope
         self.ptt_hold          = None   # callable: (held: bool) -> None — windowed chord
         self.wake_get_state    = None   # callable: () -> dict {enabled, awake, ready}
@@ -5388,6 +5390,14 @@ class JarvisUI:
         self._win.get_plugin_settings = cb
 
     @property
+    def request_say(self):
+        return self._win.request_say
+
+    @request_say.setter
+    def request_say(self, cb):
+        self._win.request_say = cb
+
+    @property
     def on_wake_toggle(self):
         return self._win.on_wake_toggle
 
@@ -5402,6 +5412,22 @@ class JarvisUI:
     @on_wake_manual.setter
     def on_wake_manual(self, cb):
         self._win.on_wake_manual = cb
+
+    @property
+    def on_wake_install(self):
+        return self._win.on_wake_install
+
+    @on_wake_install.setter
+    def on_wake_install(self, cb):
+        self._win.on_wake_install = cb
+
+    @property
+    def wake_is_ready(self):
+        return self._win.wake_is_ready
+
+    @wake_is_ready.setter
+    def wake_is_ready(self, cb):
+        self._win.wake_is_ready = cb
 
     @property
     def wake_get_state(self):
@@ -5460,7 +5486,15 @@ class JarvisUI:
         self._win._state_sig.emit(state)
 
     def write_log(self, text: str):
-        self._win._log_sig.emit(text)
+        self._win._log_sig.emit(str(text))
+
+    def write_task_log(self, message: str):
+        """Thread-safe bridge to the left-side live task terminal."""
+        self._win._task_sig.emit(str(message)[:400])
+
+    @property
+    def ready(self) -> bool:
+        return bool(self._win._ready)
 
     def wait_for_api_key(self):
         while not self._win._ready:
