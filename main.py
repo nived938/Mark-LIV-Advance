@@ -2585,7 +2585,6 @@ def main():
     ui = JarvisUI("face.png")
 
     def runner():
-        ui.wait_for_access()
         ui.wait_for_api_key()
         jarvis = JarvisLive(ui)
         try:
