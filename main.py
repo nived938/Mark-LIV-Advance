@@ -1236,6 +1236,7 @@ class JarvisLive:
             "file_processor", "image_processor", "ocr_advance",
             "meeting_copilot", "knowledge_vault", "workflow_recorder",
             "event_rules", "hardware_diagnostics", "self_updater",
+            "jarvis_services", "public_api",
         }
 
     def _execute_workflow(self, workflow: dict) -> str:
@@ -2349,6 +2350,15 @@ class JarvisLive:
         except Exception as e:
             print(f"[EventRules] Disabled: {e}")
 
+        # New standalone desktop utility trackers.
+        try:
+            from core.device_services import SCREEN_TRACKER, GEOFENCE_MONITOR
+            SCREEN_TRACKER.start()
+            GEOFENCE_MONITOR.start(self.ui)
+            self.ui.write_log("SYS: Screen-time tracking active.")
+        except Exception as e:
+            print(f"[Utilities] Passive trackers disabled: {e}")
+
         while True:
             if self._shutdown_requested:
                 break
@@ -2575,6 +2585,7 @@ def main():
     ui = JarvisUI("face.png")
 
     def runner():
+        ui.wait_for_access()
         ui.wait_for_api_key()
         jarvis = JarvisLive(ui)
         try:
