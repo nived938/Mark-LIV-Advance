@@ -69,6 +69,54 @@ def _existing_app_window(app_name: str):
 
 _ALLOWED = {"click","double_click","right_click","type","smart_type","hotkey","press","key","scroll","wait","screen_click","focus_window"}
 
+def _hotkey_parts(spec):
+    """Normalize Gemini shortcut output into safe PyAutoGUI operations.
+
+    Accepts:
+      - ["ctrl", "n"]
+      - "ctrl+n"
+      - "ctrl+k ctrl+o"  (two chords)
+      - "ctrl+k o"       (chord followed by a single key)
+    """
+    if isinstance(spec, (list, tuple)):
+        raw = [str(x).strip() for x in spec if str(x).strip()]
+        if len(raw) > 1 and all("+" not in x for x in raw):
+            return [("hotkey", raw)]
+        spec = " ".join(raw)
+
+    text = str(spec or "").strip()
+    if not text:
+        return []
+
+    ops = []
+    # Spaces separate sequential key operations. '+' joins a chord.
+    for token in text.split():
+        token = token.strip()
+        if not token:
+            continue
+        if "+" in token:
+            keys = [k.strip() for k in token.split("+") if k.strip()]
+            if keys:
+                ops.append(("hotkey", keys))
+        else:
+            ops.append(("press", token))
+    return ops
+
+def _execute_hotkey(spec):
+    ops = _hotkey_parts(spec)
+    if not ops:
+        return "Rejected hotkey: empty shortcut."
+
+    results = []
+    for kind, value in ops:
+        if kind == "hotkey":
+            result = computer_control({"action": "hotkey", "keys": value})
+        else:
+            result = computer_control({"action": "press", "key": value})
+        results.append(result)
+
+    return " → ".join(results)
+
 def _decide(goal, history, image, width, height, window):
     title = window.get("title", "")
     recent = json.dumps(history[-6:], ensure_ascii=False)
@@ -84,6 +132,11 @@ Do not use terminal commands as a substitute for GUI interaction.
 Do not claim success without verification.
 The screenshot is the source of truth: only act on controls you can actually see.
 When a dialog, menu, editor, or file tree appears, re-observe it before acting.
+Do not repeat the exact same action and parameters when it did not visibly change the screen.
+For hotkeys, put the shortcut in parameters.keys as a single chord like "ctrl+n".
+For sequential shortcuts, use one chord per action; never write "ctrl+k ctrl+o" as one chord.
+For VS Code folder/file creation, prefer the visible File menu, Open Folder flow, New File flow,
+or reliable individual keyboard actions. Do not press Save on an unsaved empty editor before creating the requested file.
 If the goal is visibly complete, return done.
 Return ONLY JSON:
 {{"action":"click|double_click|right_click|type|smart_type|hotkey|press|scroll|wait|screen_click|focus_window|done","parameters":{{}},"reason":"short reason"}}"""
@@ -115,21 +168,26 @@ Return ONLY JSON:
 
 def _execute(step):
     action = str(step.get("action","")).lower().strip()
-    if action == "key": action = "press"
+    if action == "key":
+        action = "press"
     if action not in _ALLOWED:
         return f"Rejected action: {action}"
 
-    # Gemini sometimes returns action parameters at the top level instead of
-    # under "parameters". Accept both shapes so a valid UI decision is not
-    # discarded just because the model serialized the object slightly
-    # differently.
+    # Gemini may serialize parameters at the top level or under parameters.
     p = dict(step.get("parameters") or {})
     for key in (
-        "x", "y", "text", "keys", "key", "direction", "amount", "seconds",
-        "title", "description", "clear_first"
+        "x", "y", "text", "keys", "key", "hotkey", "direction", "amount",
+        "seconds", "title", "description", "clear_first"
     ):
         if key not in p and key in step:
             p[key] = step[key]
+
+    if action == "hotkey":
+        # The model historically returned "hotkey" instead of the declared
+        # "keys" field. Accept both, and correctly execute sequential chords.
+        spec = p.get("keys") or p.get("hotkey")
+        return _execute_hotkey(spec)
+
     p["action"] = action
 
     if action in {"click","double_click","right_click"} and pyautogui is not None:
