@@ -28,8 +28,7 @@ def knowledge_vault(parameters: dict = None, player=None, **_) -> str:
                 f"- {row['title']} | {row['path']} | "
                 f"{row.get('snippet','')[:700]}"
             )
-        return "
-".join(lines)
+        return "\n".join(lines)
 
     if action == "status":
         s = vault_status()
