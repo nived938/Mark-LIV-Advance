@@ -16,6 +16,11 @@ try:
 except Exception:
     Desktop = None
 
+try:
+    import psutil
+except Exception:
+    psutil = None
+
 
 _GENERIC = {
     "whatsapp", "accept", "answer", "decline", "reject", "ignore",
