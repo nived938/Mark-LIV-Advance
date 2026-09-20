@@ -19,7 +19,7 @@ import psutil
 # logging-category warning during fallback probing; this is not a Python error
 # and the probe can continue normally. Keep useful application warnings intact
 # while silencing only this known Qt diagnostic.
-_qt_font_rule = "qt.text.font.db.warning=false"
+_qt_font_rule = "qt.text.font.db=false"
 _qt_rules = os.environ.get("QT_LOGGING_RULES", "").strip()
 if _qt_font_rule not in _qt_rules.split(";"):
     os.environ["QT_LOGGING_RULES"] = (
