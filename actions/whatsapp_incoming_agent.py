@@ -114,7 +114,7 @@ class WhatsAppIncomingAgent:
         self._thread.start()
         print(
             "[WhatsAppAgent] Incoming-call monitor started "
-            "(notification + screen vision + UIA/Win32)."
+            "(notification + UIA; visual controls require notification confirmation)."
         )
 
     def stop(self) -> None:
@@ -566,11 +566,11 @@ class WhatsAppIncomingAgent:
         # Detector 2: visual controls. This is intentionally independent of
         # WhatsApp's accessibility tree.
         points = self._visual_call_controls()
-        if points:
+        if points and "notification" in sources:
             accept_point, decline_point = points
             sources.append("vision")
             return IncomingCall(
-                caller=caller or self._best_whatsapp_chat_caller() or "someone",
+                caller=caller or self._caller_from_text(notification[1]) or "unknown caller",
                 window=None,
                 accept_control=None,
                 decline_control=None,
