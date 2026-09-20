@@ -327,7 +327,10 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation=""):
 TOOL = {
     "name": "whatsapp_advance",
     "description": (
-        "Control the installed WINDOWS WhatsApp desktop app only. Never use WhatsApp Web. "
+        "WINDOWS WHATSAPP DESKTOP ONLY. This is the default WhatsApp tool for untagged commands "
+        "about WhatsApp on this PC. Use it for 'message achan in whatsapp', 'call achan in "
+        "whatsapp', and similar commands unless the user explicitly says @phone/Android phone. "
+        "Never use phone_advance for those normal PC WhatsApp commands. Never use WhatsApp Web. "
         "For messages, find the contact, open the chat, focus the actual message composer, "
         "paste the message, and press Enter automatically. Do not ask for confirmation. "
         "Do not report success unless the message input was focused and Enter was pressed. "
