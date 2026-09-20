@@ -18,6 +18,8 @@ import requests
 
 UA = "JARVIS-Mark-LIV/1.0"
 TIMEOUT = 12
+_MUSICBRAINZ_LOCK = __import__("threading").Lock()
+_MUSICBRAINZ_LAST = 0.0
 
 
 API_CATALOG = [
@@ -119,8 +121,7 @@ def call_api(service: str, query: str = "", **kwargs) -> str:
         base = str(kwargs.get("from_currency") or kwargs.get("base") or "USD").upper()
         target = str(kwargs.get("to_currency") or kwargs.get("to") or "EUR").upper()
         return json.dumps(_get(
-            "https://api.frankfurter.app/latest",
-            {"from": base, "to": target},
+            f"https://api.frankfurter.dev/v2/rate/{quote(base)}/{quote(target)}"
         ).json(), indent=2, ensure_ascii=False)
 
     if s == "world_time_weather":
@@ -221,10 +222,18 @@ def call_api(service: str, query: str = "", **kwargs) -> str:
         return json.dumps(stories, indent=2, ensure_ascii=False)
 
     if s == "musicbrainz":
-        return json.dumps(_get(
-            "https://musicbrainz.org/ws/2/artist",
-            {"query": q or "Daft Punk", "fmt": "json", "limit": 10},
-        ).json(), indent=2, ensure_ascii=False)
+        global _MUSICBRAINZ_LAST
+        with _MUSICBRAINZ_LOCK:
+            now = __import__("time").monotonic()
+            wait = 1.05 - (now - _MUSICBRAINZ_LAST)
+            if wait > 0:
+                __import__("time").sleep(wait)
+            result = _get(
+                "https://musicbrainz.org/ws/2/artist",
+                {"query": q or "Daft Punk", "fmt": "json", "limit": 10},
+            ).json()
+            _MUSICBRAINZ_LAST = __import__("time").monotonic()
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     if s == "openligadb":
         shortcut = str(kwargs.get("league") or "bl1").lower()
