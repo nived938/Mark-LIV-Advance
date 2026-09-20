@@ -1332,13 +1332,14 @@ class JarvisLive:
                         "response": None, "session_memory": None}
                 r = await loop.run_in_executor(None, lambda: self._action_registry.run(name, args, _ctx))
                 result = r or "Done."
-                # web_search: mirror results to the on-screen content panel
-                if (name == "web_search" and r
-                        and not r.startswith("No results")
-                        and not r.startswith("Search failed")):
-                    _mode  = args.get("mode", "search")
-                    _query = args.get("query") or ", ".join(args.get("items", []))
-                    _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
+                # Keep search results visible in JARVIS while the voice answer stays brief.
+                if r and name in {"web_search", "file_search_advance", "mark32_advance"}:
+                    if name == "file_search_advance":
+                        _label = "FILE SEARCH"
+                    elif name == "mark32_advance":
+                        _label = "MARK 32"
+                    else:
+                        _label = "WEB SEARCH"
                     self.ui.show_content(_label, r)
 
             else:
