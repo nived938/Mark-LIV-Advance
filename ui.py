@@ -3136,10 +3136,16 @@ class MainWindow(QMainWindow):
     def _append_task_log(self, message: str):
         if not hasattr(self, "_task_terminal"):
             return
-        self._task_terminal.append(message)
         self._task_terminal.moveCursor(
             self._task_terminal.textCursor().MoveOperation.End
         )
+        self._task_terminal.insertPlainText(message + "\n")
+        lines = self._task_terminal.toPlainText().splitlines()
+        if len(lines) > 120:
+            self._task_terminal.setPlainText("\n".join(lines[-120:]))
+            self._task_terminal.moveCursor(
+                self._task_terminal.textCursor().MoveOperation.End
+            )
 
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
