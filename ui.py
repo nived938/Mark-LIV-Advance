@@ -13,6 +13,19 @@ from pathlib import Path
 
 import psutil
 
+# Qt can emit noisy font-database warnings while probing installed fonts for
+# complex-script shaping support (for example: \"qt.text.font.db: OpenType
+# support missing ... script 19\"). Qt's own font database emits these as a
+# logging-category warning during fallback probing; this is not a Python error
+# and the probe can continue normally. Keep useful application warnings intact
+# while silencing only this known Qt diagnostic.
+_qt_font_rule = "qt.text.font.db.warning=false"
+_qt_rules = os.environ.get("QT_LOGGING_RULES", "").strip()
+if _qt_font_rule not in _qt_rules.split(";"):
+    os.environ["QT_LOGGING_RULES"] = (
+        f"{_qt_rules};{_qt_font_rule}" if _qt_rules else _qt_font_rule
+    )
+
 if platform.system() == "Windows":
     _WIN_HIDE: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
 else:
@@ -3043,8 +3056,8 @@ class MainWindow(QMainWindow):
         # application's left system-rail. It stays visible while idle so the
         # user always knows where long-running task progress will appear.
         self._task_terminal_panel = self._build_task_terminal_panel(self._hud_cam_stack)
-        self._task_terminal_panel.show()
-        self._task_terminal_panel.raise_()
+        # Hidden until a real long-running operation starts.
+        self._task_terminal_panel.hide()
 
         self._center_split = QSplitter(Qt.Orientation.Vertical)
         self._center_split.setStyleSheet(f"""
@@ -3137,8 +3150,20 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             print(f"[UI] Close cleanup request failed: {exc}")
         event.accept()
+    def show_task_terminal(self) -> None:
+        """Show the Arc Core task terminal for an active long-running task."""
+        if hasattr(self, "_task_terminal_panel"):
+            self._task_terminal_panel.show()
+            self._position_task_terminal()
+            self._task_terminal_panel.raise_()
+
+    def hide_task_terminal(self) -> None:
+        """Hide the Arc Core task terminal when no long-running task is active."""
+        if hasattr(self, "_task_terminal_panel"):
+            self._task_terminal_panel.hide()
+
     def write_task_log(self, message: str):
-        """Thread-safe append to the left-side live task terminal."""
+        """Thread-safe append to the Arc Core task terminal."""
         stamp = time.strftime("%H:%M:%S")
         self._task_sig.emit(f"[{stamp}] {str(message).strip()[:240]}")
 
@@ -5586,8 +5611,16 @@ class JarvisUI:
     def write_log(self, text: str):
         self._win._log_sig.emit(str(text))
 
+    def show_task_terminal(self) -> None:
+        """Show the task terminal inside the Arc Core HUD."""
+        self._win.show_task_terminal()
+
+    def hide_task_terminal(self) -> None:
+        """Hide the task terminal when no long-running task is active."""
+        self._win.hide_task_terminal()
+
     def write_task_log(self, message: str):
-        """Thread-safe bridge to the left-side live task terminal."""
+        """Thread-safe bridge to the Arc Core task terminal."""
         self._win._task_sig.emit(str(message)[:400])
 
     @property
