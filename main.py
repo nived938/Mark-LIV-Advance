@@ -1673,11 +1673,19 @@ class JarvisLive:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
                             print(f"[JARVIS] 📞 {fc.name}")
-                            fr = await self._execute_tool(fc)
-                            fn_responses.append(fr)
-                        await self.session.send_tool_response(
-                            function_responses=fn_responses
-                        )
+                            tool_task = asyncio.create_task(self._execute_tool(fc))
+                            self._active_tool_tasks.add(tool_task)
+                            try:
+                                fr = await tool_task
+                                fn_responses.append(fr)
+                            except asyncio.CancelledError:
+                                print(f"[JARVIS] ✋ Cancelled tool: {fc.name}")
+                            finally:
+                                self._active_tool_tasks.discard(tool_task)
+                        if fn_responses and self.session and not self._shutdown_requested:
+                            await self.session.send_tool_response(
+                                function_responses=fn_responses
+                            )
                         await self._flush_pending_vision()
         except Exception as e:
             print(f"[JARVIS] ❌ Recv: {e}")
@@ -2142,7 +2150,9 @@ class JarvisLive:
     # ── main loop ───────────────────────────────────────────────────────────
 
     def _ensure_async_executor(self) -> None:
-        """Keep reconnects alive even if a cancelled task shut down asyncio's default executor."""
+        """Keep reconnects alive during normal operation; never rebuild while shutting down."""
+        if self._shutdown_requested:
+            return
         loop = self._loop
         current = getattr(loop, "_default_executor", None)
         if current is not None and not getattr(current, "_shutdown", False):
@@ -2156,6 +2166,7 @@ class JarvisLive:
 
     async def run(self):
         self._loop = asyncio.get_event_loop()
+        self._run_task = asyncio.current_task()
         self._ensure_async_executor()
         self._reconnect_event = asyncio.Event()
 
@@ -2202,6 +2213,8 @@ class JarvisLive:
             self._whatsapp_incoming_agent = None
 
         while True:
+            if self._shutdown_requested:
+                break
             try:
                 self._ensure_async_executor()
                 print("[JARVIS] Connecting...")
@@ -2281,6 +2294,9 @@ class JarvisLive:
             except SystemExit:
                 raise
             except BaseException as e:
+                if self._shutdown_requested:
+                    print("[JARVIS] Shutdown requested — stopping session supervisor.")
+                    break
                 # Catches both Exception and BaseExceptionGroup (Python 3.11+
                 # TaskGroup raises BaseExceptionGroup when tasks are cancelled
                 # externally, which `except Exception` would miss, letting the
@@ -2377,7 +2393,7 @@ class JarvisLive:
             finally:
                 self.session = None
                 # Only save if there was a real conversation (≥3 turns)
-                if len(self._session_log) >= 3:
+                if len(self._session_log) >= 3 and not self._shutdown_requested:
                     asyncio.create_task(self._save_session_summary())
 
             self.set_speaking(False)
@@ -2386,9 +2402,26 @@ class JarvisLive:
             if self._dashboard:
                 await self._dashboard.broadcast({"type": "status", "state": "sleeping"})
 
+            if self._shutdown_requested:
+                break
             delay = getattr(self, "_conn_backoff", 3)
             print(f"[JARVIS] Reconnecting in {delay}s...")
             await asyncio.sleep(delay)
+
+        try:
+            if self._whatsapp_incoming_agent is not None:
+                self._whatsapp_incoming_agent.stop()
+        except Exception:
+            pass
+        try:
+            executor = getattr(self, "_mark32_executor", None)
+            if executor is not None:
+                executor.shutdown(wait=False, cancel_futures=True)
+                self._mark32_executor = None
+        except Exception:
+            pass
+        self._run_task = None
+        self.session = None
 
 def main():
     ui = JarvisUI("face.png")
