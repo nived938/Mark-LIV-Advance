@@ -3613,9 +3613,6 @@ class MainWindow(QMainWindow):
     def camera_stream_active(self) -> bool:
         return not self._cam_stop.is_set()
 
-    def stop_camera_stream(self) -> None:
-        self._cam_stop.set()
-
     # ------------------------------------------------------------------
     # Icon generation — arc-reactor style, rendered with Pillow
     # ------------------------------------------------------------------
