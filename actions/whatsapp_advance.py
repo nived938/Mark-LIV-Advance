@@ -280,6 +280,68 @@ def _click_call_button(kind):
 def whatsapp_advance(action, contact="", phone="", message="", confirmation=""):
     action = (action or "").lower().strip()
 
+    # Incoming-call controls are backed by the Windows WhatsApp native call
+    # dialog. The detector keeps the pending caller in memory until the user
+    # answers JARVIS. Never use WhatsApp Web for these actions.
+    if action in ("accept_incoming", "answer_incoming"):
+        from actions.whatsapp_incoming_agent import get_incoming_agent
+        agent = get_incoming_agent()
+        caller = agent.pending.caller if agent.pending else (contact or "the caller")
+        ok, error = agent.accept()
+        if not ok:
+            return f"Could not accept the incoming WhatsApp call from {caller}: {error}"
+        if message:
+            time.sleep(1.0)
+            sent, send_error = _send_message_desktop(caller, message)
+            if not sent:
+                return f"Accepted the WhatsApp call from {caller}, but I could not send the message: {send_error}"
+            return f"Accepted the WhatsApp call from {caller} and sent the message."
+        return f"Accepted the WhatsApp call from {caller}."
+
+    if action in ("decline_incoming", "reject_incoming"):
+        from actions.whatsapp_incoming_agent import get_incoming_agent
+        agent = get_incoming_agent()
+        caller = agent.pending.caller if agent.pending else (contact or "the caller")
+        ok, error = agent.decline()
+        if not ok:
+            return f"Could not decline the incoming WhatsApp call from {caller}: {error}"
+        if message:
+            sent, send_error = _send_message_desktop(caller, message)
+            if not sent:
+                return f"Declined the WhatsApp call from {caller}, but I could not send the follow-up message: {send_error}"
+            return f"Declined the WhatsApp call from {caller} and sent the follow-up message."
+        return f"Declined the WhatsApp call from {caller}."
+
+    if action in ("call_and_message", "message_then_call"):
+        target = contact or phone
+        if not target:
+            return "A WhatsApp contact name or phone number is required."
+        if not message:
+            return "The message to send is required."
+        # Sending the message before starting the call is the reliable desktop
+        # flow: once the native call window takes focus, the chat composer may
+        # no longer be reachable. The call still follows immediately.
+        if phone:
+            sent, send_error = _send_by_phone(phone, message)
+        else:
+            sent, send_error = _send_message_desktop(contact, message)
+        if not sent:
+            return f"Could not send the message to {target}: {send_error}"
+        if not _open_desktop():
+            return f"Sent the message to {target}, but could not open WhatsApp for the call."
+        win = _focus_whatsapp(10)
+        if not win:
+            return f"Sent the message to {target}, but the WhatsApp window was not detected for the call."
+        if contact:
+            ok, error = _click_search_and_find(contact)
+            if not ok:
+                return f"Sent the message to {target}, but could not open the chat for the call: {error}"
+        kind = "voice"
+        ok, error = _click_call_button(kind)
+        if not ok:
+            return f"Sent the message to {target}, but could not trigger the WhatsApp call: {error}"
+        return f"Sent the message to {target} and started the WhatsApp voice call."
+
     if action in ("open", "open_whatsapp"):
         return "Opened the WhatsApp desktop app." if _open_desktop() else "Could not open the WhatsApp desktop app."
 
@@ -334,16 +396,16 @@ TOOL = {
         "For messages, find the contact, open the chat, focus the actual message composer, "
         "paste the message, and press Enter automatically. Do not ask for confirmation. "
         "Do not report success unless the message input was focused and Enter was pressed. "
-        "Calls and video calls should use Windows UI Automation automatically."
+        "Calls and video calls should use Windows UI Automation automatically. Incoming calls are detected in the native Windows WhatsApp call dialog; accept_incoming and decline_incoming control the pending call. For decline_incoming, include message for a follow-up text. For accept_incoming, include message to send after answering. call_and_message sends the requested text and then starts the voice call because the native call window can take focus."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "action": {"type": "STRING", "description": "open_whatsapp, message, send, call, or video_call"},
+            "action": {"type": "STRING", "description": "open_whatsapp, message, send, call, video_call, accept_incoming, decline_incoming, or call_and_message"},
             "contact": {"type": "STRING", "description": "WhatsApp contact name"},
             "phone": {"type": "STRING", "description": "International phone number"},
             "message": {"type": "STRING", "description": "Message text"},
-            "confirmation": {"type": "STRING", "description": "Legacy field, not required"},
+            "confirmation": {"type": "STRING", "description": "Legacy field, not required"},\n            "message": {"type": "STRING", "description": "For incoming-call follow-up or call_and_message, the text to send"},
         },
         "required": ["action"],
     },
