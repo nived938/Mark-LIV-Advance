@@ -4191,7 +4191,7 @@ class MainWindow(QMainWindow):
         self._content_panel.show()
         if first_show:
             total = self._center_split.height()
-            self._center_split.setSizes([max(total - 220, 120), 220])
+            self._center_split.setSizes([max(total - 300, 120), 300])
 
     # ── document review ──────────────────────────────────────────────────────
     # Rendered as rich text into the content panel that already exists, rather
@@ -5428,7 +5428,7 @@ class JarvisUI:
 
     def show_content(self, title: str, text: str):
         """Thread-safe: display content in the panel below the HUD."""
-        self._win._content_sig.emit(title[:48], text[:4000])
+        self._win._content_sig.emit(title[:48], text[:12000])
 
     def show_quiz(self, topic: str, questions, grade=None) -> None:
         """Thread-safe: put an interactive quiz on the board.
