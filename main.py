@@ -780,6 +780,10 @@ class JarvisLive:
 
     def _cancel_active_tools(self) -> None:
         """Cancel active async tools and cooperative local searches."""
+        try:
+            self.ui.hide_task_terminal()
+        except Exception:
+            pass
         for task in list(self._active_tool_tasks):
             try:
                 task.cancel()
@@ -1231,6 +1235,10 @@ class JarvisLive:
 
         print(f"[JARVIS] 🔧 {name}  {args}")
         if self._needs_task_terminal(name):
+            try:
+                self.ui.show_task_terminal()
+            except Exception:
+                pass
             self._log_task_event(f"> {name.upper()} START")
             if args:
                 self._log_task_event(f"  args: {str(args)[:180]}")
@@ -1393,6 +1401,10 @@ class JarvisLive:
                 self._log_task_event(f"< {name.upper()} ERROR")
             else:
                 self._log_task_event(f"< {name.upper()} COMPLETE")
+            try:
+                self.ui.hide_task_terminal()
+            except Exception:
+                pass
 
         # A tool that declared itself NON_BLOCKING also says when its answer may
         # re-enter the conversation. Without this the model finishes whatever it
