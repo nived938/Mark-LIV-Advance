@@ -108,12 +108,17 @@ class WhatsAppIncomingAgent:
             combined = f"{name} {aid}"
             if accept is None and (
                 name in {"accept", "answer"}
+                or "accept" in name
+                or "answer" in name
                 or "accept" in aid
                 or "answer" in aid
             ):
                 accept = control
             if decline is None and (
                 name in {"decline", "reject", "ignore"}
+                or "decline" in name
+                or "reject" in name
+                or "ignore" in name
                 or any(x in aid for x in ("decline", "reject", "ignore"))
             ):
                 decline = control
