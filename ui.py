@@ -3005,6 +3005,7 @@ class MainWindow(QMainWindow):
     _quiz_hide_sig  = pyqtSignal()
     _review_sig     = pyqtSignal(str, str, object, object)  # document review payload
     _task_sig       = pyqtSignal(str)
+    _mode_sig       = pyqtSignal(str)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -3177,6 +3178,7 @@ class MainWindow(QMainWindow):
         self._quiz_hide_sig.connect(self._hide_quiz)
         self._review_sig.connect(self._show_review)
         self._task_sig.connect(self._append_task_log)
+        self._mode_sig.connect(self._apply_mode_display)
         self._cam_stop = threading.Event()
         self._cam_stop.set()
         self._latest_cam_frame: bytes | None = None
@@ -3871,8 +3873,11 @@ class MainWindow(QMainWindow):
         return w
 
     def set_mode_display(self, mode: str) -> None:
+        """Thread-safe public bridge. All Qt theme/widget work stays on GUI thread."""
+        self._mode_sig.emit(str(mode or "normal"))
+
+    def _apply_mode_display(self, mode: str) -> None:
         mode = str(mode or "normal").strip().lower()
-        # Serious mode changes the whole interface palette, not only this label.
         set_operating_mode_theme(mode)
 
         labels = {
@@ -3882,23 +3887,21 @@ class MainWindow(QMainWindow):
         }
         text, color = labels.get(mode, ("MODE  NORMAL", C.TEXT_MED))
         if hasattr(self, "_mode_lbl"):
-            self._mode_lbl.setText(text)
             if mode == "serious":
+                self._mode_lbl.setText(text)
                 self._mode_lbl.setStyleSheet(
                     f"color: {C.RED}; background: #2a060c; "
-                    f"border: 1px solid {C.RED}; border-radius: 3px; "
-                    f"padding: 2px 6px;"
+                    f"border: 1px solid {C.RED}; border-radius: 3px; padding: 2px 6px;"
                 )
                 self._mode_lbl.setToolTip(
                     "DANGER: Serious mode is active. Autonomous Mark32 operations are enabled."
                 )
             else:
+                self._mode_lbl.setText(text)
                 self._mode_lbl.setStyleSheet(
                     f"color: {color}; background: transparent; border: none; padding: 0;"
                 )
-                self._mode_lbl.setToolTip(
-                    "Current operating mode: " + mode
-                )
+                self._mode_lbl.setToolTip("Current operating mode: " + mode)
 
     def _tick_clock(self):
         self._clock_lbl.setText(time.strftime("%H:%M:%S"))
