@@ -570,14 +570,21 @@ class CommunicationAgent:
 
 
 class ParallelAgent:
-    def run(self, jobs: list[dict], worker: Callable[[dict], str], cancel: CancelToken) -> list[str]:
-        cancel.check()
+    def run(self, jobs: list[dict], worker: Callable[[dict], str], cancel: CancelToken | None = None) -> list[str]:
+        if not jobs:
+            return []
+        if cancel is not None:
+            cancel.check()
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(8, len(jobs)))) as pool:
             futures = [pool.submit(worker, job) for job in jobs]
             out = []
             for future in futures:
-                cancel.check()
-                out.append(future.result())
+                if cancel is not None:
+                    cancel.check()
+                try:
+                    out.append(future.result())
+                except Exception as exc:
+                    out.append(f"Parallel task failed: {exc}")
             return out
 
 
@@ -655,6 +662,22 @@ class Mark32Engine:
     def plan(self, goal: str) -> list[dict]:
         return self.planner.plan(goal)
 
+    def parallel_execute(self, goals: list[str]) -> list[str]:
+        """Run independent tasks without resetting the global cancellation token."""
+        cleaned = [str(g).strip() for g in (goals or []) if str(g).strip()][:8]
+        if not cleaned:
+            return []
+        def worker(job):
+            goal = job["goal"]
+            low = goal.lower().strip()
+            if "monitor" in low or "screen" in low:
+                return f"{goal}: {self.vision.monitors()}"
+            if "python version" in low:
+                return f"{goal}: {self.terminal.run('python --version', timeout=30)}"
+            if "git version" in low:
+                return f"{goal}: {self.terminal.run('git --version', timeout=30)}"
+            return self.execute(goal, confirmed=False)
+        return self.parallel.run([{"goal": g} for g in cleaned], worker, None)
     def execute(self, goal: str, confirmed: bool = False) -> str:
         """Execute the safe deterministic part of a multi-step goal."""
         task_id = self.store.create(goal)
