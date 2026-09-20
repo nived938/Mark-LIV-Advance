@@ -1278,12 +1278,6 @@ class JarvisLive:
         args = dict(fc.args or {})
 
         print(f"[JARVIS] 🔧 {name}  {args}")
-        try:
-            if (self._action_registry.has(name) or self._plugin_registry.has(name)):
-                from core.workflow_manager import record as record_workflow_step
-                record_workflow_step(name, args)
-        except Exception:
-            pass
         if self._needs_task_terminal(name):
             try:
                 self.ui.show_task_terminal()
@@ -1455,6 +1449,22 @@ class JarvisLive:
                 self.ui.hide_task_terminal()
             except Exception:
                 pass
+
+        # Record successful action/plugin calls only. This keeps a saved
+        # workflow replayable even when an attempted step previously failed.
+        try:
+            ok_for_record = not any(
+                marker in low_result
+                for marker in ("failed", "error", "not found", "cancelled", "denied")
+            )
+            if (
+                ok_for_record
+                and (self._action_registry.has(name) or self._plugin_registry.has(name))
+            ):
+                from core.workflow_manager import record as record_workflow_step
+                record_workflow_step(name, args)
+        except Exception:
+            pass
 
         # A tool that declared itself NON_BLOCKING also says when its answer may
         # re-enter the conversation. Without this the model finishes whatever it
