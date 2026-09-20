@@ -1573,11 +1573,15 @@ class JarvisLive:
                             # If this turn_complete ends an interrupted response, clear the
                             # flag and skip all further processing for that turn.
                             if self._interrupted:
+                                # If the user spoke while JARVIS was being interrupted,
+                                # that input is the new turn and must not be discarded.
+                                # Only discard the old response's turn_complete when no
+                                # new user transcription arrived with it.
                                 self._interrupted = False
-                                in_buf  = []
                                 out_buf = []
                                 self._visemes.reset()
-                                continue
+                                if not in_buf:
+                                    continue
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
