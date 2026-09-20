@@ -703,3 +703,42 @@ The long-term system should provide:
 - user control over synchronization and remote execution
 
 The strategic goal is to evolve J.A.R.V.I.S. from a desktop assistant into a persistent personal computing agent.
+
+# 18. Public API Strategy
+
+The desktop J.A.R.V.I.S. build now has a curated Public API hub based on the public-apis/public-apis catalog.
+
+The selection is intentionally biased toward services useful to a personal assistant and toward APIs that can be used without a paid subscription or permanent API credential where practical.
+
+## 20 selected APIs
+
+1. Open-Meteo — weather forecasts and historical weather.
+2. Nominatim — forward and reverse geocoding.
+3. IPinfo — approximate network/IP geolocation.
+4. Sunrise and Sunset — sunrise/sunset times.
+5. Frankfurter — exchange rates and currency conversion.
+6. wttr.in — lightweight weather output.
+7. RainViewer — weather radar map data.
+8. NASA — NASA science and astronomy data.
+9. Open Library — book discovery and metadata.
+10. Free Dictionary — definitions, pronunciation and examples.
+11. Jikan — anime data.
+12. Kroki — diagram rendering.
+13. JSONPlaceholder — controlled API testing.
+14. AviationWeather — METAR/TAF and aviation weather information.
+15. SWAPI — Star Wars information.
+16. Crossref — scholarly publication metadata.
+17. Gutendex — Project Gutenberg book search.
+18. Hacker News — technology and startup stories.
+19. MusicBrainz — music metadata.
+20. OpenLigaDB — football results and league data.
+
+The J.A.R.V.I.S. public_api tool exposes these services through one routing interface.
+
+## API limitations
+
+External APIs are not part of J.A.R.V.I.S.'s core offline capabilities. The assistant should handle timeouts, rate limits and service outages without claiming that an unavailable service responded.
+
+Some services have their own usage policies or rate limits. For example, MusicBrainz requests should be kept at or below its documented request rate, while Open Library asks applications to follow its usage guidance. Weather and map APIs can also have attribution or non-commercial-use requirements.
+
+Location from an IP address is approximate network geolocation, not GPS tracking.
