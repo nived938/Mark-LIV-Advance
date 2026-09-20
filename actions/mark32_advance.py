@@ -16,13 +16,17 @@ def mark32_advance(parameters: dict, player=None, speak=None, **_) -> str:
     if action == "plan":
         return str(ENGINE.plan(p.get("goal", "")))
     if action == "execute":
-        return ENGINE.execute(p.get("goal", ""))
+        return ENGINE.execute(p.get("goal", ""), bool(p.get("confirmed")))
     if action in {"cancel", "stop", "stop_all"}:
         return ENGINE.cancel_all()
     if action == "reset_cancel":
         return ENGINE.reset_cancel()
     if action == "status":
         return ENGINE.status()
+    if action == "parallel":
+        return json.dumps(ENGINE.parallel_execute(p.get("goals", [])), indent=2)
+    if action == "notify":
+        return ENGINE.notifications.notify(p.get("title", "Mark 32"), p.get("message", ""))
     if action == "monitors":
         return str(ENGINE.vision.monitors())
     if action == "screenshot":
@@ -106,8 +110,11 @@ TOOL = {
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "action": {"type": "STRING", "description": "status|plan|execute|cancel|reset_cancel|monitors|screenshot|click|move|type|android_status|android_shell|android_tap|android_text|android_key|search_files|file|terminal|test|compile|browser_open|browser_fetch|clipboard_read|clipboard_write|camera|schedule|schedules|remember|recall|contact_save|contact_search|email_compose|sms_compose"},
+            "action": {"type": "STRING", "description": "status|plan|execute|parallel|cancel|reset_cancel|monitors|screenshot|click|move|type|android_status|android_shell|android_tap|android_text|android_key|search_files|file|terminal|test|compile|browser_open|browser_fetch|clipboard_read|clipboard_write|camera|notify|schedule|schedules|remember|recall|contact_save|contact_search|email_compose|sms_compose"},
             "goal": {"type": "STRING", "description": "Goal for planning/execution"},
+            "goals": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Independent goals for parallel execution"},
+            "title": {"type": "STRING", "description": "Notification title"},
+            "message": {"type": "STRING", "description": "Notification message"},
             "monitor": {"type": "INTEGER", "description": "Zero-based monitor index"},
             "path": {"type": "STRING", "description": "File path"},
             "url": {"type": "STRING", "description": "Browser URL"},
