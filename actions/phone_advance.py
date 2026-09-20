@@ -418,8 +418,11 @@ def phone_advance(
 TOOL = {
     "name": "phone_advance",
     "description": (
-        "Control the user's Android phone from this Windows PC through ADB wireless debugging. "
-        "Use ONLY when the user explicitly uses @phone or asks to control the connected phone. "
+        "ANDROID PHONE ONLY. Use this tool ONLY when the user's current command explicitly targets "
+        "the physical Android phone, for example with @phone, 'my phone', or 'Android phone'. "
+        "NEVER use this tool for normal Windows/PC commands. In particular, NEVER use it for "
+        "an untagged WhatsApp command such as 'message achan in whatsapp' — that belongs to "
+        "whatsapp_advance for the installed Windows WhatsApp desktop app. "
         "Actions: status, pair, connect, call a normal phone contact, send an SMS, "
         "whatsapp_message, whatsapp_call, whatsapp_video_call, open_camera, take_photo, close_camera, pull a photo/file from phone "
         "to PC, and push a photo/file from PC to phone. Resolve contact names from the phone's "
