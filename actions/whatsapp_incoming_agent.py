@@ -93,6 +93,9 @@ class WhatsAppIncomingAgent:
         self._notification_seen: set[str] = set()
         self._notification_ready_logged = False
         self._visual_last_log = 0.0
+        self._visual_present = False
+        self._event_cooldown_until = 0.0
+        self._last_visual_signature = None
 
     @property
     def pending(self) -> Optional[IncomingCall]:
@@ -304,6 +307,7 @@ class WhatsAppIncomingAgent:
                 accepts = [x for x in candidates if x[1] == "accept"]
                 declines = [x for x in candidates if x[1] == "decline"]
                 if not accepts or not declines:
+                    self._visual_present = False
                     return None
 
                 # The two controls should be reasonably close together.
@@ -318,9 +322,15 @@ class WhatsAppIncomingAgent:
                             best = (pair_score, a, d)
 
                 if not best:
+                    self._visual_present = False
                     return None
 
                 _, a, d = best
+                self._visual_present = True
+                visual_signature = (round(a[2] / 40), round(a[3] / 40), round(d[2] / 40), round(d[3] / 40))
+                if visual_signature == self._last_visual_signature:
+                    return None
+                self._last_visual_signature = visual_signature
                 now = time.time()
                 if now - self._visual_last_log > 3:
                     print(
@@ -439,6 +449,31 @@ class WhatsAppIncomingAgent:
             return []
         return results
 
+    def _best_whatsapp_chat_caller(self) -> str:
+        # The native popup can be a WebView/non-client surface with no caller
+        # text. WhatsApp normally activates the caller's chat, so use a short
+        # visible chat-header/button label as the fallback.
+        found = []
+        for window in self._find_whatsapp_windows():
+            if not self._looks_like_whatsapp(window):
+                continue
+            try:
+                for control in window.descendants():
+                    text = self._safe_text(control).strip()
+                    low = self._norm(text)
+                    if not text or low in _GENERIC or len(text) > 60:
+                        continue
+                    if any(x in low for x in ("search", "type a message", "chat list", "whatsapp business", "web content")):
+                        continue
+                    if any(x in low for x in ("voice call", "video call", "missed call", "no answer")):
+                        continue
+                    found.append(text)
+            except Exception:
+                continue
+        if not found:
+            return ""
+        return min(found, key=len)
+
     def _extract_caller(self, window) -> str:
         texts = []
         try:
@@ -492,6 +527,8 @@ class WhatsAppIncomingAgent:
         return ""
 
     def _find_incoming(self):
+        if time.time() < self._event_cooldown_until:
+            return None
         sources = []
         caller = ""
 
@@ -508,7 +545,9 @@ class WhatsAppIncomingAgent:
                 continue
             if not self._looks_like_whatsapp(window):
                 continue
-            caller = caller or self._extract_caller(window)
+            detected_caller = self._extract_caller(window)
+            if self._norm(detected_caller) not in {"someone", "non client input sink window"}:
+                caller = caller or detected_caller
             sources.append("uia")
             return IncomingCall(
                 caller=caller or "someone",
@@ -531,7 +570,7 @@ class WhatsAppIncomingAgent:
             accept_point, decline_point = points
             sources.append("vision")
             return IncomingCall(
-                caller=caller or "someone",
+                caller=caller or self._best_whatsapp_chat_caller() or "someone",
                 window=None,
                 accept_control=None,
                 decline_control=None,
@@ -589,6 +628,7 @@ class WhatsAppIncomingAgent:
             with self._lock:
                 self._pending = None
                 self._last_signature = ""
+            self._event_cooldown_until = time.time() + 5.0
         return ok, error
 
     def decline(self) -> tuple[bool, str]:
@@ -605,6 +645,7 @@ class WhatsAppIncomingAgent:
             with self._lock:
                 self._pending = None
                 self._last_signature = ""
+            self._event_cooldown_until = time.time() + 5.0
         return ok, error
 
     def _run(self) -> None:
