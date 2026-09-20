@@ -1,6 +1,7 @@
 #computer_control.py
 import io
 import json
+import os
 import platform
 import re
 import string
@@ -14,6 +15,10 @@ else:
 import time
 import random
 from pathlib import Path
+
+from core.env import load_env
+
+load_env()
 
 try:
     import pyautogui
@@ -55,7 +60,7 @@ def _get_os() -> str:
 
 
 def _get_api_key() -> str:
-    return _load_config().get("gemini_api_key", "")
+    return os.getenv("GEMINI_API_KEY", "").strip() or _load_config().get("gemini_api_key", "")
 
 _SAFE_SCREENSHOT_ROOTS = (
     Path.home(),
