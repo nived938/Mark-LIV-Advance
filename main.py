@@ -1437,8 +1437,8 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
+        low_result = str(result or "").lower()
         if self._needs_task_terminal(name):
-            low_result = str(result or "").lower()
             if "cancel" in low_result:
                 self._log_task_event(f"< {name.upper()} CANCELLED")
             elif "failed" in low_result or "error" in low_result or "not found" in low_result:
