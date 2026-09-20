@@ -2,6 +2,7 @@ from pathlib import Path
 import shutil
 import os
 import string
+import threading
 
 HOME = Path.home()
 
@@ -26,6 +27,17 @@ MARKERS = (
     "pyproject.toml", "requirements.txt", "setup.py", "Pipfile",
     "uv.lock", "main.py", "app.py", "run.py", "manage.py"
 )
+
+SEARCH_CANCEL_EVENT = threading.Event()
+
+
+def cancel_file_search():
+    SEARCH_CANCEL_EVENT.set()
+
+
+def reset_file_search_cancel():
+    SEARCH_CANCEL_EVENT.clear()
+
 
 SKIP_DIRS = {
     "$recycle.bin", "system volume information", "node_modules",
@@ -81,6 +93,8 @@ def _is_project(folder):
 def _walk(base):
     try:
         for current, dirs, files in os.walk(base, topdown=True, onerror=lambda e: None):
+            if SEARCH_CANCEL_EVENT.is_set():
+                return
             dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS]
             yield Path(current), dirs, files
     except Exception:
@@ -129,7 +143,11 @@ def _search_roots(roots, q, max_results, recursive=True):
         return results
 
     for base in roots:
+        if SEARCH_CANCEL_EVENT.is_set():
+            return results
         for folder, dirs, files in _walk(base):
+            if SEARCH_CANCEL_EVENT.is_set():
+                return results
             if q and _folder_matches(folder, q):
                 key = str(folder).lower()
                 if key not in seen:
@@ -148,6 +166,8 @@ def _search_roots(roots, q, max_results, recursive=True):
                     if len(results) >= max_results:
                         return results
             for name in files:
+                if SEARCH_CANCEL_EVENT.is_set():
+                    return results
                 if q and q not in name.lower() and q not in str(folder).lower():
                     continue
                 full = folder / name
@@ -161,6 +181,7 @@ def _search_roots(roots, q, max_results, recursive=True):
 
 
 def file_search_advance(query: str, root: str = "", extension: str = "", limit: int = 30):
+    reset_file_search_cancel()
     q = (query or "").lower().strip()
     ext = (extension or "").lower().strip()
     max_results = max(1, min(int(limit or 30), 100))
