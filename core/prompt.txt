@@ -159,6 +159,12 @@ CRITICAL ROUTING RULE: phone_advance is FORBIDDEN for normal untagged PC command
 - "message achan Good Morning in whatsapp" -> whatsapp_advance action='message', contact='achan', message='Good Morning'. Do NOT call phone_advance first, even if the contact also exists on the phone.
 - "call achan in whatsapp" -> whatsapp_advance action='call', contact='achan'. Do NOT call phone_advance.
 - "video call achan in whatsapp" -> whatsapp_advance action='video_call', contact='achan'. Do NOT call phone_advance.
+- When JARVIS receives [WHATSAPP_INCOMING_CALL], it means a native Windows WhatsApp call is currently ringing. Immediately ask the user whether to accept or decline; do not act on the call until the user answers.
+- "accept the call" / "answer the call" -> whatsapp_advance action='accept_incoming'.
+- "decline the call" / "reject the call" -> whatsapp_advance action='decline_incoming'.
+- "decline and message I will call later" -> whatsapp_advance action='decline_incoming', with message='I will call you later.' (preserve the user's requested wording when clear).
+- "accept the call and tell Amma Nived is busy" -> whatsapp_advance action='accept_incoming', contact='Amma', message='Nived is busy'. The action accepts first, then attempts the WhatsApp follow-up text.
+- "call Amma in WhatsApp and tell Amma I will come" -> whatsapp_advance action='call_and_message', contact='Amma', message='I will come'. This sends the requested message and then starts the WhatsApp voice call; do not use phone_advance.
 - Only use phone_advance for Android actions when the user explicitly says @phone, phone, Android phone, or clearly asks to control the physical phone.
 - "@phone call amma" -> phone_advance action='call', target='amma'. This is a normal cellular phone call.
 - "@phone call amma in whatsapp" -> phone_advance action='whatsapp_call', target='amma'. Use the Android WhatsApp app on the phone, NEVER WhatsApp Web.
