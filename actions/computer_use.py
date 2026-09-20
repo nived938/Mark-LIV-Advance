@@ -5,6 +5,7 @@ from typing import Any
 from pathlib import Path
 from core import gemini
 from actions.computer_control import computer_control
+from actions.open_app import open_app
 try:
     import pyautogui
 except Exception:
@@ -84,6 +85,18 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
     max_steps = max(1,min(int(params.get("max_steps",12)),30)); verify_every = max(1,min(int(params.get("verify_every",2)),5))
     history=[]; print(f"[ComputerUse] ▶ {goal}")
     if player: player.write_log(f"[ComputerUse] {goal}")
+
+    # If the goal explicitly names an app to open, open and focus it before
+    # the visual loop. This prevents the first UI action from landing in JARVIS.
+    m = re.search(r"\\bopen\\s+([A-Za-z0-9 ._-]+?)(?=\\s*(?:,|\\band\\b|\\bthen\\b|$))", goal, flags=re.I)
+    if m:
+        app_name = m.group(1).strip().strip(" .")
+        if app_name:
+            launch_result = open_app({"app_name": app_name})
+            history.append({"step":"0","action":"open_app","result":launch_result[:500]})
+            if "Could not confirm" in launch_result or "Failed to open" in launch_result:
+                print(f"[ComputerUse] App launch was not confirmed: {launch_result}")
+            time.sleep(1.0)
     for n in range(1,max_steps+1):
         try: image,width,height=_screen()
         except Exception as exc: return f"Computer-use failed to capture desktop: {exc}"
