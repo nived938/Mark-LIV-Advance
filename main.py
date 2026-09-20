@@ -583,6 +583,7 @@ class JarvisLive:
         self.ui.on_close          = self.request_shutdown
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
         self.ui.on_audio_device_change = self._on_audio_device_change
+        self.ui.execute_workflow = self._execute_workflow
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False → next rebuild drops the resumption handle
 
@@ -1233,11 +1234,52 @@ class JarvisLive:
             "file_processor", "image_processor", "ocr_advance",
         }
 
+    def _execute_workflow(self, workflow: dict) -> str:
+        """Replay a saved action/plugin workflow synchronously from a worker thread."""
+        steps = workflow.get("steps") if isinstance(workflow, dict) else None
+        if not isinstance(steps, list) or not steps:
+            return "Workflow contains no executable steps."
+
+        results = []
+        for i, step in enumerate(steps, 1):
+            if not isinstance(step, dict):
+                continue
+            name = str(step.get("tool") or "").strip()
+            args = dict(step.get("args") or {})
+            if not name:
+                continue
+            try:
+                if self._action_registry.has(name):
+                    result = self._action_registry.run(
+                        name, args,
+                        {"player": self.ui, "speak": self.speak,
+                         "response": None, "session_memory": None},
+                    )
+                elif self._plugin_registry.has(name):
+                    result = self._plugin_registry.run(
+                        name, args, player=self.ui, session_memory=None
+                    )
+                else:
+                    result = f"Tool '{name}' is no longer installed."
+            except Exception as exc:
+                result = f"Tool '{name}' failed: {exc}"
+            results.append(f"{i}. {name}: {str(result)[:1200]}")
+            if any(marker in str(result).lower() for marker in ("failed", "error", "not found")):
+                break
+
+        return "Workflow replay complete:\n" + "\n".join(results)
+
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
 
         print(f"[JARVIS] 🔧 {name}  {args}")
+        try:
+            if (self._action_registry.has(name) or self._plugin_registry.has(name)):
+                from core.workflow_manager import record as record_workflow_step
+                record_workflow_step(name, args)
+        except Exception:
+            pass
         if self._needs_task_terminal(name):
             try:
                 self.ui.show_task_terminal()
