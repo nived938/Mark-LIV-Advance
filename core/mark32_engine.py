@@ -435,14 +435,30 @@ class CodingTestingAgent:
         target = Path(path).expanduser()
         if command:
             return TerminalAgent().run(command, cwd=str(target if target.is_dir() else target.parent), timeout=300)
-        if (target / "pytest.ini").exists() or (target / "pyproject.toml").exists():
+        if (target / "tests").is_dir() and ((target / "pytest.ini").exists() or (target / "pyproject.toml").exists() or (target / "requirements.txt").exists()):
             return TerminalAgent().run("python -m pytest -q", cwd=str(target), timeout=300)
         if (target / "package.json").exists():
             return TerminalAgent().run("npm test -- --runInBand", cwd=str(target), timeout=300)
+        py_files = [target / "main.py", target / "core" / "mark32_engine.py", target / "actions" / "mark32_advance.py"]
+        existing = [str(p) for p in py_files if p.exists()]
+        if existing:
+            commands = " & ".join(f'python -m py_compile "{p}"' for p in existing)
+            return TerminalAgent().run(commands, cwd=str(target), timeout=120)
         return "No automatic test command was detected."
 
-    def inspect_python(self, path: str) -> str:
-        return TerminalAgent().run(f'python -m py_compile "{path}"', timeout=120)
+    def inspect_python(self, path: str, cwd: str = "") -> str:
+        raw = str(path or "").strip()
+        base = Path(cwd).expanduser() if cwd else BASE_DIR
+        if not raw:
+            return "Compile failed: no Python file path was supplied."
+        target = Path(raw).expanduser()
+        if not target.is_absolute():
+            target = base / target
+        if not target.exists():
+            return f"File not found: {target}"
+        if target.suffix.lower() != ".py":
+            return f"Compile failed: not a Python file: {target}"
+        return TerminalAgent().run(f'python -m py_compile "{target}"', cwd=str(base), timeout=120)
 
 
 class BrowserAgent:
