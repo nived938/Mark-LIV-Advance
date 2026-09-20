@@ -2,6 +2,9 @@ import time
 import subprocess
 import platform
 import shutil
+from pathlib import Path
+
+from core.app_registry import ensure_index, find_app
 
 try:
     import psutil
@@ -119,43 +122,33 @@ def _launch_windows(app_name: str) -> bool:
         except Exception as e:
             print(f"[open_app] CMD launch failed: {e}")
 
-    if shutil.which(app_name) or shutil.which(app_name.split(".")[0]):
+    # Normal desktop apps are resolved from JARVIS's local executable index.
+    # This deliberately avoids opening Start Menu and typing a search query.
+    indexed = find_app(app_name)
+    if indexed:
+        exe = indexed["path"]
         try:
-            subprocess.Popen(
-                app_name,
-                shell=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            subprocess.Popen([exe], cwd=str(Path(exe).parent), close_fds=True)
             time.sleep(1.5)
-            # Focus common desktop apps when possible.
+            _focus_window((indexed.get("name", app_name),), timeout=3.0)
+            return True
+        except Exception as e:
+            print(f"[open_app] Indexed executable failed: {e}")
+
+    # Keep PATH support for command-style applications that are not desktop EXEs.
+    binary = shutil.which(app_name) or shutil.which(app_name.split(".")[0])
+    if binary:
+        try:
+            subprocess.Popen([binary], close_fds=True)
+            time.sleep(1.0)
             _focus_window((app_name.replace(".exe", ""),), timeout=2.0)
             return True
         except Exception as e:
-            print(f"[open_app] subprocess failed: {e}")
+            print(f"[open_app] PATH launch failed: {e}")
 
-    if ":" in app_name:
-        try:
-            subprocess.Popen(f"start {app_name}", shell=True)
-            time.sleep(1.5)
-            return True
-        except Exception:
-            pass
-
-    try:
-        import pyautogui
-        pyautogui.PAUSE = 0.1
-        pyautogui.press("win")
-        time.sleep(0.7)
-        pyautogui.write(app_name, interval=0.05)
-        time.sleep(0.9)
-        pyautogui.press("enter")
-        time.sleep(2.5)
-        _focus_window((app_name,), timeout=2.0)
-        return True
-    except Exception as e:
-        print(f"[open_app] Start Menu search failed: {e}")
-
+    # The index can be stale after a new application is installed. Refresh it
+    # in the background, but never fall back to Start Menu search.
+    ensure_index()
     return False
 
 def _launch_macos(app_name: str) -> bool:
@@ -224,8 +217,9 @@ def open_app(parameters=None, response=None, player=None, session_memory=None) -
 TOOL = {
     "name": "open_app",
     "description": (
-        "Opens and focuses an application on the computer. "
+        "Opens and focuses an application on the computer using JARVIS's local executable index. "
         "Use this whenever the user asks to open, launch, or start an app. "
+        "Do not search the Windows Start Menu for normal desktop apps. Resolve the app from the local .exe index and launch the real executable path directly. "
         "On Windows, PowerShell and CMD are launched as real console windows "
         "and explicitly focused before returning, so a following keyboard "
         "type/press action goes into that terminal rather than the JARVIS chat. "
