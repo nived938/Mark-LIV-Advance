@@ -3039,6 +3039,13 @@ class MainWindow(QMainWindow):
         self._hud_cam_stack.addWidget(self.hud)
         self._hud_cam_stack.addWidget(_cam_cont)
 
+        # Floating task terminal: lives INSIDE the Arc Core screen, not in the
+        # application's left system-rail. It stays visible while idle so the
+        # user always knows where long-running task progress will appear.
+        self._task_terminal_panel = self._build_task_terminal_panel(self._hud_cam_stack)
+        self._task_terminal_panel.show()
+        self._task_terminal_panel.raise_()
+
         self._center_split = QSplitter(Qt.Orientation.Vertical)
         self._center_split.setStyleSheet(f"""
             QSplitter::handle {{
@@ -3165,9 +3172,14 @@ class MainWindow(QMainWindow):
     def _on_cam_stream(self, start: bool) -> None:
         if start:
             self._hud_cam_stack.setCurrentIndex(1)
+            if hasattr(self, "_task_terminal_panel"):
+                self._task_terminal_panel.hide()
         else:
             self._hud_cam_stack.setCurrentIndex(0)
             self._cam_live_lbl.clear()
+            if hasattr(self, "_task_terminal_panel"):
+                self._task_terminal_panel.show()
+                self._position_task_terminal()
 
     def _on_cam_frame(self, data: bytes) -> None:
         # Keep the latest JPEG so camera_advance can save exactly what the
@@ -3626,6 +3638,9 @@ class MainWindow(QMainWindow):
                 (cw.height() - oh) // 2,
                 ow, oh,
             )
+        # Persistent task terminal — inside the Arc Core/HUD, left side.
+        self._position_task_terminal()
+
         # Camera preview — bottom-right corner of the center/HUD area
         pw = _CameraPreview._W
         ph = self._cam_preview.height() or _CameraPreview._H
@@ -3815,24 +3830,10 @@ class MainWindow(QMainWindow):
         lay.addWidget(info_panel)
         lay.addSpacing(4)
 
-        task_hdr = QLabel("◈ TASK TERMINAL")
-        task_hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-        task_hdr.setStyleSheet(
-            f"color: {C.PRI}; background: transparent; "
-            f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;"
-        )
-        lay.addWidget(task_hdr)
-
-        self._task_terminal = QTextEdit()
-        self._task_terminal.setReadOnly(True)
-        self._task_terminal.setFixedHeight(175)
-        self._task_terminal.setFont(QFont("Courier New", 6))
-        self._task_terminal.setStyleSheet(
-            f"QTextEdit {{ background: #000308; color: {C.GREEN}; "
-            f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px; }}"
-        )
-        self._task_terminal.setPlaceholderText("TASK TERMINAL // IDLE")
-        lay.addWidget(self._task_terminal)
+        # Task terminal is intentionally NOT part of the application side rail.
+        # It is a floating overlay inside the Arc Core/HUD area (built after the
+        # center stack exists). Keeping the side rail focused on system metrics
+        # leaves the center screen as the place where active work is observed.
 
         lay.addStretch()
 
@@ -3851,6 +3852,103 @@ class MainWindow(QMainWindow):
             lay.addWidget(lbl)
 
         return w
+    def _build_task_terminal_panel(self, parent: QWidget) -> QWidget:
+        """Build the persistent task terminal as a floating Arc Core overlay."""
+        panel = QWidget(parent)
+        panel.setObjectName("ArcTaskTerminal")
+        panel.setStyleSheet(f"""
+            QWidget#ArcTaskTerminal {{
+                background: rgba(0, 6, 10, 222);
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+            }}
+        """)
+
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setSpacing(6)
+
+        hdr = QHBoxLayout()
+        hdr.setSpacing(5)
+
+        icon = QLabel("◈")
+        icon.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        icon.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        hdr.addWidget(icon)
+
+        title = QLabel("TASK TERMINAL")
+        title.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        title.setStyleSheet(
+            f"color: {C.PRI}; background: transparent; letter-spacing: 1px;"
+        )
+        hdr.addWidget(title)
+        hdr.addStretch()
+
+        state = QLabel("LIVE")
+        state.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        state.setStyleSheet(f"color: {C.GREEN}; background: transparent;")
+        hdr.addWidget(state)
+
+        lay.addLayout(hdr)
+
+        rule = QFrame()
+        rule.setFixedHeight(1)
+        rule.setStyleSheet(f"background: {C.BORDER};")
+        lay.addWidget(rule)
+
+        self._task_terminal = QTextEdit()
+        self._task_terminal.setReadOnly(True)
+        self._task_terminal.setFont(QFont("Courier New", 7))
+        self._task_terminal.setMinimumHeight(170)
+        self._task_terminal.setStyleSheet(f"""
+            QTextEdit {{
+                background: #000308;
+                color: {C.GREEN};
+                border: 1px solid {C.BORDER};
+                border-radius: 4px;
+                padding: 7px;
+                selection-background-color: {C.PRI_GHO};
+            }}
+            QScrollBar:vertical {{
+                background: #000308;
+                width: 6px;
+                border: none;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {C.BORDER_B};
+                border-radius: 3px;
+                min-height: 18px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+                border: none;
+            }}
+        """)
+        self._task_terminal.setPlaceholderText("TASK TERMINAL // IDLE")
+        self._task_terminal.setPlainText(
+            f"[{time.strftime('%H:%M:%S')}] TASK TERMINAL // IDLE\n"
+            "Waiting for a long-running operation…"
+        )
+        lay.addWidget(self._task_terminal, stretch=1)
+
+        return panel
+
+    def _position_task_terminal(self) -> None:
+        """Anchor the terminal to the left side of the Arc Core/HUD area."""
+        if not hasattr(self, "_task_terminal_panel"):
+            return
+        host = self._hud_cam_stack
+        margin_left = 14
+        margin_top = 18
+        width = min(340, max(280, int(host.width() * 0.28)))
+        height = min(260, max(210, int(host.height() * 0.34)))
+        width = min(width, max(250, host.width() - 40))
+        height = min(height, max(180, host.height() - 36))
+        self._task_terminal_panel.setGeometry(
+            margin_left, margin_top, width, height
+        )
+        self._task_terminal_panel.raise_()
+
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
         w.setFixedWidth(_RIGHT_W)
