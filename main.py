@@ -1232,6 +1232,8 @@ class JarvisLive:
             "screen_control_advance", "screen_process", "camera_advance",
             "whatsapp_advance", "calendar_advance", "email_advance",
             "file_processor", "image_processor", "ocr_advance",
+            "meeting_copilot", "knowledge_vault", "workflow_recorder",
+            "event_rules", "hardware_diagnostics", "self_updater",
         }
 
     def _execute_workflow(self, workflow: dict) -> str:
