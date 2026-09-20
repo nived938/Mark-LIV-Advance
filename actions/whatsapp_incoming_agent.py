@@ -332,12 +332,11 @@ class WhatsAppIncomingAgent:
                     return None
                 self._last_visual_signature = visual_signature
                 now = time.time()
-                if now - self._visual_last_log > 3:
-                    print(
-                        "[WhatsAppAgent] Screen vision found possible call controls "
-                        f"(accept={a[2]},{a[3]} decline={d[2]},{d[3]})."
-                    )
-                    self._visual_last_log = now
+                # Visual matching is intentionally silent here. A color pair
+                # on the desktop is only a supporting signal and is not itself
+                # considered an incoming call. Actual events are logged after
+                # notification/UIA corroboration in _find_incoming().
+                return (a[2], a[3]), (d[2], d[3])
                 return (a[2], a[3]), (d[2], d[3])
         except Exception:
             return None
