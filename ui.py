@@ -3239,6 +3239,7 @@ class MainWindow(QMainWindow):
     _review_sig     = pyqtSignal(str, str, object, object)  # document review payload
     _task_sig       = pyqtSignal(str)
     _mode_sig       = pyqtSignal(str)
+    _map_sig        = pyqtSignal(str)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -3415,6 +3416,7 @@ class MainWindow(QMainWindow):
         self._review_sig.connect(self._show_review)
         self._task_sig.connect(self._append_task_log)
         self._mode_sig.connect(self._apply_mode_display)
+        self._map_sig.connect(self._apply_map)
         self._cam_stop = threading.Event()
         self._cam_stop.set()
         self._latest_cam_frame: bytes | None = None
@@ -3969,14 +3971,18 @@ class MainWindow(QMainWindow):
         self._log.append_log("SYS: Secure access granted.")
 
     def show_map(self, url: str) -> None:
+        """Thread-safe public bridge for map/location views."""
+        self._map_sig.emit(str(url))
+
+    def _apply_map(self, url: str) -> None:
         if self._map_overlay is not None:
             self._map_overlay.hide()
             self._map_overlay.deleteLater()
             self._map_overlay = None
         cw = self.centralWidget()
         ov = MapOverlay(str(url), parent=cw)
-        ow = max(520, min(cw.width() - 24, 1100))
-        oh = max(420, min(cw.height() - 24, 760))
+        ow = max(520, min(max(520, cw.width() - 24), 1100))
+        oh = max(420, min(max(420, cw.height() - 24), 760))
         ov.setGeometry(
             max(12, (cw.width() - ow) // 2),
             max(12, (cw.height() - oh) // 2),
