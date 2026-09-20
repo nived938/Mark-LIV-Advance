@@ -58,6 +58,9 @@ class EventRuleEngine:
         self._thread = threading.Thread(target=self._loop, daemon=True, name="jarvis-event-rules")
         self._thread.start()
 
+    def enabled(self) -> bool:
+        return bool(_load().get("enabled", False))
+
     def stop(self) -> None:
         d = _load()
         d["enabled"] = False
