@@ -126,7 +126,7 @@ class TaskStore:
     def create(self, goal: str) -> int:
         with _db() as con:
             cur = con.execute(
-                "INSERT INTO tasks(goal,status,created_at,updated_at) VALUES(?,?,?,?,?)",
+                "INSERT INTO tasks(goal,status,created_at,updated_at) VALUES(?,?,?,?)",
                 (goal, "running", _now(), _now()),
             )
             return int(cur.lastrowid)
