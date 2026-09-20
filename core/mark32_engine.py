@@ -623,7 +623,24 @@ class Mark32Engine:
                 desc = step["description"]
                 tool = step["tool"]
                 if tool == "deep_search":
-                    result = "\n".join(self.files.search(goal, limit=20)) or "No matching files found."
+                    # Search for the actual resource name, not the whole natural-language goal.
+                    # This makes "find my Jarvis-Mark-32 folder and verify it exists" deterministic.
+                    query = goal
+                    for phrase in (
+                        "and verify that it exists", "and verify it exists", "verify that it exists",
+                        "verify it exists", "on the computer", "on my computer", "on this computer",
+                    ):
+                        query = re.sub(re.escape(phrase), "", query, flags=re.IGNORECASE)
+                    query = re.sub(
+                        r"\\b(?:find|search|locate)\\b(?:\\s+my)?(?:\\s+computer)?\\s*(?:for|the)?\\s*",
+                        "", query, flags=re.IGNORECASE,
+                    ).strip(" .")
+                    matches = self.files.search(query, limit=20)
+                    if matches:
+                        existing = [p for p in matches if Path(p).exists()]
+                        result = "Verified existing matches:\\n" + "\\n".join(existing or matches)
+                    else:
+                        result = "No matching files or folders found."
                 elif tool == "terminal":
                     ok, reason = self.permissions.check("write_external", confirmed)
                     result = reason if not ok else self.terminal.run(goal, timeout=120)
@@ -637,7 +654,7 @@ class Mark32Engine:
                 elif tool == "android":
                     result = self.android.status()
                 else:
-                    result = f"ROUTE_REQUIRED:{desc}"
+                    routes = self.router.route(goal)\n                    result = f"ROUTE_REQUIRED:{desc}; available={routes}"
                 check = self.verifier.verify(desc, result)
                 results.append({"step": step, "result": result, "verification": check})
                 if not check["verified"] and tool != "route":
