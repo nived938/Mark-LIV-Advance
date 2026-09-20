@@ -28,7 +28,7 @@ API_CATALOG = [
     {"name": "ipinfo", "title": "IPinfo", "purpose": "IP address and approximate geolocation", "auth": "none", "https": True},
     {"name": "sunrise_sunset", "title": "Sunrise and Sunset", "purpose": "sunrise and sunset times", "auth": "none", "https": True},
     {"name": "frankfurter", "title": "Frankfurter", "purpose": "currency conversion and exchange rates", "auth": "none", "https": True},
-    {"name": "world_time_weather", "title": "World Time & Weather", "purpose": "time, timezone and weather data", "auth": "none", "https": True},
+    {"name": "wttr_in", "title": "wttr.in", "purpose": "weather and terminal-friendly forecasts", "auth": "none", "https": True},
     {"name": "rainviewer", "title": "RainViewer", "purpose": "weather radar map data", "auth": "none", "https": True},
     {"name": "nasa", "title": "NASA", "purpose": "NASA science and imagery", "auth": "none/DEMO_KEY", "https": True},
     {"name": "open_library", "title": "Open Library", "purpose": "books and book metadata", "auth": "none", "https": True},
@@ -124,11 +124,11 @@ def call_api(service: str, query: str = "", **kwargs) -> str:
             f"https://api.frankfurter.dev/v2/rate/{quote(base)}/{quote(target)}"
         ).json(), indent=2, ensure_ascii=False)
 
-    if s == "world_time_weather":
-        zone = q or str(kwargs.get("timezone") or "Asia/Kolkata")
+    if s == "wttr_in":
+        location = q or str(kwargs.get("location") or "London")
         return json.dumps(_get(
-            "https://worldtimeweather.com/api/time",
-            {"zone": zone},
+            f"https://wttr.in/{quote(location)}",
+            {"format": "j1"},
         ).json(), indent=2, ensure_ascii=False)
 
     if s == "rainviewer":
