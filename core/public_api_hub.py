@@ -9,6 +9,8 @@ timeouts.
 from __future__ import annotations
 
 import json
+import base64
+import zlib
 from urllib.parse import quote
 
 import requests
@@ -70,7 +72,7 @@ def call_api(service: str, query: str = "", **kwargs) -> str:
         if lat is None or lon is None:
             geo = _get(
                 "https://geocoding-api.open-meteo.com/v1/search",
-                {"name": q or "Kanhangad", "count": 1, "language": "en", "format": "json"},
+                {"name": q or "London", "count": 1, "language": "en", "format": "json"},
             ).json()
             rows = geo.get("results") or []
             if not rows:
@@ -158,9 +160,10 @@ def call_api(service: str, query: str = "", **kwargs) -> str:
         ).json(), indent=2, ensure_ascii=False)
 
     if s == "kroki":
-        # Returns the diagram URL rather than downloading binary image content.
+        # Kroki's GET path format uses zlib-compressed, URL-safe base64 data.
         diagram = q or "graph TD; A[Start] --> B[Jarvis]"
-        encoded = quote(diagram, safe="")
+        compressed = zlib.compress(diagram.encode("utf-8"), 9)
+        encoded = base64.urlsafe_b64encode(compressed).decode("ascii").rstrip("=")
         return f"https://kroki.io/mermaid/svg/{encoded}"
 
     if s == "jsonplaceholder":
