@@ -233,7 +233,9 @@ def open_app(parameters=None, response=None, player=None, session_memory=None) -
 TOOL = {
     "name": "open_app",
     "description": (
-        "Opens and focuses an application on the computer using JARVIS's local executable index. "
+        "Opens and focuses an application on the computer using JARVIS's local executable index. " +
+        "IMPORTANT: Use this ONLY when the user wants to open/launch/start an app by itself. " +
+        "If the request also asks to click, type, create, edit, save, navigate, or perform multiple steps inside the app, DO NOT call open_app directly; call computer_use with the entire user goal. "
         "Use this whenever the user asks to open, launch, or start an app. "
         "Do not search the Windows Start Menu for normal desktop apps. Resolve the app from the local .exe index and launch the real executable path directly. "
         "On Windows, PowerShell and CMD are launched as real console windows "
