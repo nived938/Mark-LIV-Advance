@@ -4,6 +4,10 @@ import json
 import math
 import os
 import platform
+
+from core.env import load_env
+
+load_env()
 import random
 import subprocess
 import sys
@@ -5551,7 +5555,12 @@ class MainWindow(QMainWindow):
         self.hud.speaking = (state == "SPEAKING")
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists(): return False
+        env_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if env_key:
+            return True
+
+        if not API_FILE.exists():
+            return False
         try:
             d = json.loads(API_FILE.read_text(encoding="utf-8"))
             return bool(d.get("gemini_api_key")) and bool(d.get("os_system"))
