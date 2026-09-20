@@ -366,28 +366,56 @@ class FileAgent:
         return out
 
     def manage(self, operation: str, source: str, destination: str = "") -> str:
+        operation = str(operation or "").lower().strip()
+        source = str(source or "").strip()
+        destination = str(destination or "").strip()
+        if not source:
+            return "File operation failed: no source path was supplied."
         src = Path(source).expanduser()
         if operation == "open":
-            if os.name == "nt":
-                os.startfile(src)
-            else:
-                webbrowser.open(src.as_uri())
-            return f"Opened {src}."
+            if not src.exists():
+                return f"File not found: {src}"
+            try:
+                if os.name == "nt":
+                    os.startfile(src)
+                else:
+                    webbrowser.open(src.as_uri())
+                return f"Opened {src}."
+            except Exception as exc:
+                return f"Open failed: {exc}"
+        if operation in {"copy", "move", "rename"} and not src.exists():
+            return f"File not found: {src}"
         if operation == "copy":
-            shutil.copy2(src, Path(destination).expanduser())
-            return f"Copied {src} to {destination}."
+            try:
+                shutil.copy2(src, Path(destination).expanduser())
+                return f"Copied {src} to {destination}."
+            except Exception as exc:
+                return f"Copy failed: {exc}"
         if operation == "move":
-            shutil.move(str(src), destination)
-            return f"Moved {src} to {destination}."
+            try:
+                shutil.move(str(src), destination)
+                return f"Moved {src} to {destination}."
+            except Exception as exc:
+                return f"Move failed: {exc}"
         if operation == "rename":
-            src.rename(destination)
-            return f"Renamed {src}."
+            try:
+                src.rename(destination)
+                return f"Renamed {src}."
+            except Exception as exc:
+                return f"Rename failed: {exc}"
         if operation == "delete":
-            if src.is_dir():
-                shutil.rmtree(src)
-            else:
+            if not src.exists():
+                return f"File not found: {src}"
+            try:
+                resolved = src.resolve()
+                if resolved == BASE_DIR.resolve() or resolved.name.lower() == ".git":
+                    return f"Delete blocked for protected path: {resolved}"
+                if src.is_dir():
+                    return f"Delete blocked: {src} is a directory. Directory deletion requires a dedicated operation."
                 src.unlink()
-            return f"Deleted {src}."
+                return f"Deleted {src}."
+            except Exception as exc:
+                return f"Delete failed: {exc}"
         return f"Unknown file operation: {operation}"
 
 
