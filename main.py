@@ -834,6 +834,10 @@ class JarvisLive:
         """Announce a native Windows WhatsApp incoming call and wait for the user."""
         caller = getattr(call, "caller", "someone") or "someone"
         self.ui.write_log(f"SYS: Incoming WhatsApp call from {caller}.")
+        # An incoming call is an external event that should reach the user even
+        # when wake-word mode has put JARVIS to sleep.
+        if self._wake_enabled and not self._awake:
+            self.wake(reason="WhatsApp incoming call")
         loop = getattr(self, "_loop", None)
         if not loop or not self.session:
             print(f"[WhatsAppAgent] Call from {caller} detected before the Live session was ready.")
