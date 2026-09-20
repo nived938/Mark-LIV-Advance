@@ -117,6 +117,18 @@ class PermissionSystem:
         op = operation.lower().strip()
         if op in self.SAFE:
             return True, "safe"
+
+        # Serious mode is an explicitly selected autonomy profile. It relaxes
+        # Mark 32's routine confirmation gates so requested file/terminal/device
+        # operations can proceed without a second prompt. The OS itself still
+        # enforces ACL/UAC permissions outside this application.
+        try:
+            from core.mode_manager import current_mode
+            if current_mode() == "serious":
+                return True, "serious mode"
+        except Exception:
+            pass
+
         if op in self.CONFIRM and not confirmed:
             return False, f"CONFIRMATION_REQUIRED:{op}"
         return True, "allowed"
