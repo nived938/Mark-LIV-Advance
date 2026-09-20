@@ -2339,6 +2339,16 @@ class JarvisLive:
             print(f"[WhatsAppAgent] Disabled: {e}")
             self._whatsapp_incoming_agent = None
 
+        # Resume persisted WHEN/THEN rules after application restart.
+        try:
+            from core.event_rules import ENGINE as _event_rules_engine
+            _event_rules_engine.configure_player(self.ui)
+            if _event_rules_engine.enabled():
+                _event_rules_engine.start(self.ui)
+                self.ui.write_log("SYS: Event Rules resumed.")
+        except Exception as e:
+            print(f"[EventRules] Disabled: {e}")
+
         while True:
             if self._shutdown_requested:
                 break
