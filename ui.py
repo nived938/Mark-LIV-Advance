@@ -3945,9 +3945,67 @@ class MainWindow(QMainWindow):
         else:
             self.showFullScreen()
 
+    def _show_access_gate(self) -> None:
+        try:
+            from core.access_control import is_configured
+            setup_mode = not is_configured()
+        except Exception:
+            setup_mode = True
+        ov = AccessGateOverlay(setup_mode, parent=self)
+        ov.access_granted.connect(self._on_access_granted)
+        ov.setGeometry(self.rect())
+        ov.show()
+        ov.raise_()
+        ov._password.setFocus()
+        self._access_overlay = ov
+
+    def _on_access_granted(self) -> None:
+        self._access_granted = True
+        ov = self._access_overlay
+        if ov is not None:
+            ov.hide()
+            ov.deleteLater()
+            self._access_overlay = None
+        self._log.append_log("SYS: Secure access granted.")
+
+    def show_map(self, url: str) -> None:
+        if self._map_overlay is not None:
+            self._map_overlay.hide()
+            self._map_overlay.deleteLater()
+            self._map_overlay = None
+        cw = self.centralWidget()
+        ov = MapOverlay(str(url), parent=cw)
+        ow = max(520, min(cw.width() - 24, 1100))
+        oh = max(420, min(cw.height() - 24, 760))
+        ov.setGeometry(
+            max(12, (cw.width() - ow) // 2),
+            max(12, (cw.height() - oh) // 2),
+            ow, oh,
+        )
+        ov.closed.connect(lambda: setattr(self, "_map_overlay", None))
+        ov.show()
+        ov.raise_()
+        self._map_overlay = ov
+
+    def hide_map(self) -> None:
+        if self._map_overlay is not None:
+            self._map_overlay.hide()
+            self._map_overlay.deleteLater()
+            self._map_overlay = None
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         cw = self.centralWidget()
+        if self._access_overlay and self._access_overlay.isVisible():
+            self._access_overlay.setGeometry(self.rect())
+        if self._map_overlay and self._map_overlay.isVisible():
+            ow = max(520, min(cw.width() - 24, 1100))
+            oh = max(420, min(cw.height() - 24, 760))
+            self._map_overlay.setGeometry(
+                max(12, (cw.width() - ow) // 2),
+                max(12, (cw.height() - oh) // 2),
+                ow, oh,
+            )
         if self._overlay and self._overlay.isVisible():
             ow, oh = 460, 390
             self._overlay.setGeometry(
@@ -5970,6 +6028,15 @@ class JarvisUI:
     def ready(self) -> bool:
         return bool(self._win._ready)
 
+    def wait_for_access(self):
+        """Block the background runner until the first-access gate is unlocked."""
+        while not self._win._access_granted:
+            time.sleep(0.1)
+
+    @property
+    def access_granted(self) -> bool:
+        return bool(self._win._access_granted)
+
     def wait_for_api_key(self):
         while not self._win._ready:
             time.sleep(0.1)
@@ -6021,6 +6088,13 @@ class JarvisUI:
     def stop_camera_stream(self) -> None:
         """Thread-safe: stop the live camera feed."""
         self._win.stop_camera_stream()
+
+    def show_map(self, url: str) -> None:
+        """Thread-safe: open an embedded map/location webview with no address bar."""
+        self._win.show_map(str(url))
+
+    def hide_map(self) -> None:
+        self._win.hide_map()
 
     def set_mode_display(self, mode: str) -> None:
         """Update the visible operating-mode label in the HUD header."""
