@@ -87,6 +87,8 @@ from core.viseme               import VisemeStream
 from core.wake_word            import (
     WakeWordDetector, is_ready as wake_is_ready, install_and_download as wake_install,
 )
+from core.mode_manager         import current_mode, prompt_context
+from core.workspace_manager     import workspace_context
 
 # How long the assistant stays awake with no user speech before it auto-sleeps
 # again (wake-word mode only).
@@ -1116,6 +1118,8 @@ class JarvisLive:
         parts = [time_ctx, identity_ctx]
         if mem_str:
             parts.append(mem_str)
+        parts.append(prompt_context())
+        parts.append(workspace_context())
         parts.append(sys_prompt)
 
         cfg = dict(
@@ -1733,6 +1737,20 @@ class JarvisLive:
                             )
                         await self._flush_pending_vision()
         except Exception as e:
+            err = str(e)
+            # Gemini Live may close the websocket with 1008 "operation was
+            # aborted" when the user interrupts an in-flight turn/tool. This is
+            # an expected server-side consequence of cancellation, not an
+            # application crash. Reconnect quietly instead of printing a full
+            # traceback.
+            if (
+                self._interrupted
+                and "1008" in err
+                and "aborted" in err.lower()
+            ):
+                print("[JARVIS] ↩ Interrupted turn closed by server — reconnecting cleanly.")
+                self.ui.write_log("SYS: Interrupted turn closed cleanly; reconnecting.")
+                raise
             print(f"[JARVIS] ❌ Recv: {e}")
             traceback.print_exc()
             raise
@@ -2342,6 +2360,17 @@ class JarvisLive:
                 if self._shutdown_requested:
                     print("[JARVIS] Shutdown requested — stopping session supervisor.")
                     break
+                err_text = str(e)
+                if (
+                    self._interrupted
+                    and "1008" in err_text
+                    and "aborted" in err_text.lower()
+                ):
+                    print("[JARVIS] ↩ Interrupted session aborted by Gemini; reconnecting without traceback.")
+                    self.ui.write_log("SYS: Gemini closed the interrupted turn; session reconnecting.")
+                    self._interrupted = False
+                    self._conn_backoff = 0
+                    continue
                 # Catches both Exception and BaseExceptionGroup (Python 3.11+
                 # TaskGroup raises BaseExceptionGroup when tasks are cancelled
                 # externally, which `except Exception` would miss, letting the
