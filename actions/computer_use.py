@@ -86,10 +86,27 @@ Return ONLY JSON:
 def _execute(step):
     action = str(step.get("action","")).lower().strip()
     if action == "key": action = "press"
-    if action not in _ALLOWED: return f"Rejected action: {action}"
-    p = dict(step.get("parameters") or {}); p["action"] = action
+    if action not in _ALLOWED:
+        return f"Rejected action: {action}"
+
+    # Gemini sometimes returns action parameters at the top level instead of
+    # under "parameters". Accept both shapes so a valid UI decision is not
+    # discarded just because the model serialized the object slightly
+    # differently.
+    p = dict(step.get("parameters") or {})
+    for key in (
+        "x", "y", "text", "keys", "key", "direction", "amount", "seconds",
+        "title", "description", "clear_first"
+    ):
+        if key not in p and key in step:
+            p[key] = step[key]
+    p["action"] = action
+
     if action in {"click","double_click","right_click"} and pyautogui is not None:
-        w,h = pyautogui.size(); p["x"] = max(0,min(int(p.get("x",0)),w-1)); p["y"] = max(0,min(int(p.get("y",0)),h-1))
+        w, h = pyautogui.size()
+        p["x"] = max(0, min(int(p.get("x", 0)), w - 1))
+        p["y"] = max(0, min(int(p.get("y", 0)), h - 1))
+
     return computer_control(p)
 
 def computer_use(parameters=None, response=None, player=None, session_memory=None):
