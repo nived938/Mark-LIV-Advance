@@ -562,7 +562,31 @@ class Mark32Engine:
         self.notifications = NotificationAgent()
         self.parallel = ParallelAgent()
         self._lock = threading.RLock()
+        self._scheduler_stop = threading.Event()
+        self._scheduler_thread = threading.Thread(target=self._scheduler_loop, daemon=True, name="mark32-scheduler")
+        self._scheduler_thread.start()
         self._write_dashboard()
+
+    def _scheduler_loop(self):
+        while not self._scheduler_stop.wait(5):
+            try:
+                now = dt.datetime.now()
+                with _db() as con:
+                    rows = con.execute(
+                        "SELECT * FROM schedules WHERE status='pending' AND run_at<=? ORDER BY id",
+                        (now.isoformat(),)
+                    ).fetchall()
+                    for row in rows:
+                        con.execute("UPDATE schedules SET status='running' WHERE id=?", (row["id"],))
+                        try:
+                            result = self.execute(row["task"], confirmed=True)
+                            con.execute("UPDATE schedules SET status='completed' WHERE id=?", (row["id"],))
+                            self.notifications.notify("Mark 32 scheduled task", str(result)[:500])
+                        except Exception:
+                            con.execute("UPDATE schedules SET status='failed' WHERE id=?", (row["id"],))
+                self._write_dashboard()
+            except Exception:
+                continue
 
     def _write_dashboard(self):
         payload = {
