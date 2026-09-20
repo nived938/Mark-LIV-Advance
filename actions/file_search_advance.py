@@ -298,6 +298,13 @@ def file_manage_advance(action: str, source: str, destination: str = ""):
             src.rename(destination)
             return f"Renamed {src} to {destination}."
         if action == "delete":
+            try:
+                from core.mode_manager import current_mode
+                if current_mode() == "serious":
+                    src.unlink()
+                    return f"Deleted {src}."
+            except Exception as exc:
+                return f"File deletion failed: {exc}"
             return "REQUIRES_CONFIRMATION: delete the requested file."
         return "Unknown action. Use open, copy, move, rename, or delete."
     except Exception as e:
