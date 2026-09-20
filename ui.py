@@ -3018,6 +3018,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._face_path = face_path
 
+        # These fields must exist before any resizeEvent can fire during
+        # show/resize/layout construction.
+        self._access_overlay: AccessGateOverlay | None = None
+        self._access_granted = False
+        self._map_overlay: MapOverlay | None = None
+
         # Load customization from config
         _cfg = _read_full_config()
         self._assistant_name: str = (_cfg.get("assistant_name") or "JARVIS").strip()
