@@ -589,40 +589,53 @@ def scan_qr_screen() -> str:
 
 
 def scan_qr_camera(player=None, timeout: float = 30.0) -> str:
-    import cv2
-    index = 0
-    try:
-        cfg = _load(ROOT / "config" / "api_keys.json", {})
-        index = int(cfg.get("camera_index", 0))
-    except Exception:
-        pass
-    backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
-    cap = cv2.VideoCapture(index, backend)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        raise RuntimeError("Camera could not be opened.")
+    """Scan QR codes using JARVIS's single embedded camera stream.
 
-    detector = cv2.QRCodeDetector()
+    Reusing the existing stream avoids opening two VideoCapture handles on the
+    same webcam, which can fail on Windows with many camera drivers.
+    """
+    import cv2
+    import numpy as np
+
+    started_here = False
+    if player is not None:
+        try:
+            active = bool(player.camera_stream_active())
+        except Exception:
+            active = False
+        if not active:
+            player.start_camera_stream()
+            started_here = True
+
     deadline = time.monotonic() + max(5.0, float(timeout))
     try:
         while time.monotonic() < deadline:
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                continue
-            value, points, _ = detector.detectAndDecode(frame)
+            frame_bytes = None
             if player is not None:
                 try:
-                    ok2, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
-                    if ok2:
-                        player.show_camera_frame(buf.tobytes())
+                    frame_bytes = player.get_latest_camera_frame()
                 except Exception:
-                    pass
+                    frame_bytes = None
+            if not frame_bytes:
+                time.sleep(0.05)
+                continue
+
+            frame = cv2.imdecode(
+                np.frombuffer(frame_bytes, dtype=np.uint8),
+                cv2.IMREAD_COLOR,
+            )
+            if frame is None:
+                time.sleep(0.03)
+                continue
+
+            value, points, _ = cv2.QRCodeDetector().detectAndDecode(frame)
             value = str(value or "").strip()
             if value:
                 return value
+            time.sleep(0.03)
     finally:
-        cap.release()
+        if started_here and player is not None:
+            player.stop_camera_stream()
     return ""
 
 
