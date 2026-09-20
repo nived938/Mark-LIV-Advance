@@ -1,11 +1,11 @@
-import json
-
 """Mark 32 master tool.
 
 This is the orchestration surface for the 29 requested Mark 32 capabilities.
 Existing specialized actions remain available and should be preferred when the
 model can route a request directly to them.
 """
+
+import json
 from core.mark32_engine import ENGINE
 
 
