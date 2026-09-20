@@ -349,7 +349,7 @@ class AndroidAgent:
 
 
 class FileAgent:
-    def search(self, query: str, root: str = "", limit: int = 30) -> list[str]:
+    def search(self, query: str, root: str = "", limit: int = 30, cancel: CancelToken | None = None) -> list[str]:
         base = Path(root).expanduser() if root else Path.home()
         if not base.exists():
             return []
@@ -357,8 +357,12 @@ class FileAgent:
         out = []
         skip = {".git", "node_modules", "__pycache__", ".venv", "venv"}
         for current, dirs, files in os.walk(base):
+            if cancel is not None and cancel.cancelled():
+                return out
             dirs[:] = [d for d in dirs if d.lower() not in skip]
             for name in files + dirs:
+                if cancel is not None and cancel.cancelled():
+                    return out
                 if not q or q in name.lower():
                     out.append(str(Path(current) / name))
                     if len(out) >= max(1, min(limit, 100)):
@@ -702,7 +706,7 @@ class Mark32Engine:
                         r"\\b(?:find|search|locate)\\b(?:\\s+my)?(?:\\s+computer)?\\s*(?:for|the)?\\s*",
                         "", query, flags=re.IGNORECASE,
                     ).strip(" .")
-                    matches = self.files.search(query, limit=20)
+                    matches = self.files.search(query, limit=20, cancel=self.cancel)
                     if matches:
                         existing = [p for p in matches if Path(p).exists()]
                         result = "Verified existing matches:\\n" + "\\n".join(existing or matches)
