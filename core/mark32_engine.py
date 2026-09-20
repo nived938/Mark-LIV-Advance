@@ -328,6 +328,10 @@ class AndroidAgent:
         except Exception as exc:
             return f"ADB failed: {exc}"
 
+    def parallel_execute(self, goals: list[str]) -> list[str]:
+        jobs = [{"goal": g} for g in goals if str(g).strip()]
+        return self.parallel.run(jobs, lambda job: self.execute(job["goal"]), self.cancel)
+
     def status(self) -> str:
         return self._adb("devices")
 
@@ -460,6 +464,16 @@ class CameraAgent:
             return f"Camera failed: {exc}"
 
 
+class NotificationAgent:
+    def notify(self, title: str, message: str) -> str:
+        try:
+            from win10toast import ToastNotifier
+            ToastNotifier().show_toast(title or "Mark 32", message, duration=5, threaded=True)
+            return "Notification sent."
+        except Exception as exc:
+            return f"Notification unavailable: {exc}"
+
+
 class SchedulerAgent:
     def add(self, run_at: str, task: str) -> str:
         try:
@@ -545,6 +559,7 @@ class Mark32Engine:
         self.scheduler = SchedulerAgent()
         self.contacts = ContactAgent()
         self.communication = CommunicationAgent()
+        self.notifications = NotificationAgent()
         self.parallel = ParallelAgent()
         self._lock = threading.RLock()
         self._write_dashboard()
@@ -572,9 +587,8 @@ class Mark32Engine:
     def plan(self, goal: str) -> list[dict]:
         return self.planner.plan(goal)
 
-    def execute(self, goal: str) -> str:
-        """Run the deterministic portion of a goal with verification and recovery.
-        Complex language routing is intentionally left to the Live model."""
+    def execute(self, goal: str, confirmed: bool = False) -> str:
+        """Execute the safe deterministic part of a multi-step goal."""
         task_id = self.store.create(goal)
         self.cancel.reset()
         steps = self.plan(goal)
@@ -582,15 +596,37 @@ class Mark32Engine:
         try:
             for step in steps:
                 self.cancel.check()
-                results.append({"step": step, "route": self.router.route(step["description"])})
-            result = json.dumps({"task_id": task_id, "goal": goal, "steps": results}, indent=2)
-            self.store.update(task_id, "planned", result)
+                desc = step["description"]
+                tool = step["tool"]
+                if tool == "deep_search":
+                    result = "\n".join(self.files.search(goal, limit=20)) or "No matching files found."
+                elif tool == "terminal":
+                    ok, reason = self.permissions.check("write_external", confirmed)
+                    result = reason if not ok else self.terminal.run(goal, timeout=120)
+                elif tool == "test":
+                    result = self.coding.test(".", "")
+                elif tool == "vision":
+                    result = self.vision.screenshot()
+                elif tool == "browser":
+                    urls = re.findall(r"https?://[^\s]+", goal)
+                    result = self.browser.open(urls[0]) if urls else "No URL found; use the browser action directly."
+                elif tool == "android":
+                    result = self.android.status()
+                else:
+                    result = f"ROUTE_REQUIRED:{desc}"
+                check = self.verifier.verify(desc, result)
+                results.append({"step": step, "result": result, "verification": check})
+                if not check["verified"] and tool != "route":
+                    raise RuntimeError(f"Self-verification failed for: {desc}")
+            payload = {"task_id": task_id, "goal": goal, "status": "completed", "steps": results}
+            result = json.dumps(payload, indent=2)
+            self.store.update(task_id, "completed", result)
             self._write_dashboard()
             return result
         except Exception as exc:
             self.store.update(task_id, "failed", str(exc))
             self._write_dashboard()
-            return f"Task failed: {exc}"
+            return f"Task failed after verification/recovery: {exc}"
 
     def status(self) -> str:
         self._write_dashboard()
