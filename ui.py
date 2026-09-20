@@ -47,6 +47,11 @@ from PyQt6.QtWidgets import (
 )
 
 try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+except Exception:
+    QWebEngineView = None
+
+try:
     from core.avatar import HoloAvatar
 except Exception:      # pragma: no cover — HUD must never die over cosmetics
     HoloAvatar = None
@@ -2989,6 +2994,234 @@ class RemoteKeyOverlay(QWidget):
         self.closed.emit()
 
 
+class AccessGateOverlay(QWidget):
+    """Full-window first-access gate with local password and optional voice phrase."""
+
+    access_granted = pyqtSignal()
+    _voice_result = pyqtSignal(str)
+
+    def __init__(self, setup_mode: bool, parent=None):
+        super().__init__(parent)
+        self._setup_mode = bool(setup_mode)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            AccessGateOverlay {{
+                background: rgba(0, 2, 7, 252);
+                border: 2px solid {C.RED};
+            }}
+            QLineEdit {{
+                background: #08050a;
+                color: {C.WHITE};
+                border: 1px solid {C.BORDER};
+                border-radius: 4px;
+                padding: 8px;
+            }}
+            QLineEdit:focus {{ border-color: {C.RED}; }}
+            QPushButton {{
+                background: #14050a;
+                color: {C.RED};
+                border: 1px solid {C.RED};
+                border-radius: 4px;
+                padding: 8px 12px;
+            }}
+            QPushButton:hover {{ background: #260811; }}
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(30, 30, 30, 30)
+        root.setSpacing(10)
+        root.addStretch()
+
+        title = QLabel("⚠  J.A.R.V.I.S. SECURE ACCESS")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setFont(QFont("Courier New", 18, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {C.RED}; background: transparent;")
+        root.addWidget(title)
+
+        subtitle = QLabel(
+            "Authentication is required before the assistant AI session and microphone are started."
+        )
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setWordWrap(True)
+        subtitle.setFont(QFont("Courier New", 9))
+        subtitle.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        root.addWidget(subtitle)
+        root.addSpacing(16)
+
+        self._status = QLabel("")
+        self._status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        root.addWidget(self._status)
+
+        self._password = QLineEdit()
+        self._password.setEchoMode(QLineEdit.EchoMode.Password)
+        self._password.setPlaceholderText("Access password")
+        self._password.returnPressed.connect(self._password_action)
+        root.addWidget(self._password)
+
+        if self._setup_mode:
+            self._confirm = QLineEdit()
+            self._confirm.setEchoMode(QLineEdit.EchoMode.Password)
+            self._confirm.setPlaceholderText("Confirm password")
+            self._voice_phrase = QLineEdit()
+            self._voice_phrase.setEchoMode(QLineEdit.EchoMode.Password)
+            self._voice_phrase.setPlaceholderText("Optional voice unlock phrase")
+            root.addWidget(self._confirm)
+            root.addWidget(self._voice_phrase)
+
+            btn = QPushButton("CREATE ACCESS")
+            btn.clicked.connect(self._password_action)
+            root.addWidget(btn)
+            self._status.setText(
+                "Create a local password. You may also define a voice unlock phrase."
+            )
+        else:
+            btn = QPushButton("UNLOCK")
+            btn.clicked.connect(self._password_action)
+            root.addWidget(btn)
+            self._voice_btn = None
+            try:
+                from core.access_control import has_voice_phrase
+                if has_voice_phrase():
+                    self._voice_btn = QPushButton("VOICE UNLOCK")
+                    self._voice_btn.clicked.connect(self._voice_action)
+                    root.addWidget(self._voice_btn)
+            except Exception:
+                pass
+            if self._voice_btn is None:
+                self._status.setText("Enter the local password to unlock J.A.R.V.I.S.")
+
+        root.addStretch()
+        note = QLabel(
+            "Password verification is local. Voice unlock is spoken-passphrase recognition, "
+            "not high-assurance biometric speaker identification."
+        )
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        note.setWordWrap(True)
+        note.setFont(QFont("Courier New", 7))
+        note.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        root.addWidget(note)
+        self._voice_result.connect(self._voice_finished)
+
+    def _password_action(self):
+        from core import access_control
+        if self._setup_mode:
+            password = self._password.text()
+            if password != self._confirm.text():
+                self._status.setText("Passwords do not match.")
+                self._status.setStyleSheet(f"color: {C.RED}; background: transparent;")
+                return
+            result = access_control.setup(password, self._voice_phrase.text())
+            if result.startswith("J.A.R.V.I.S. access protection"):
+                self._grant()
+            else:
+                self._status.setText(result)
+                self._status.setStyleSheet(f"color: {C.RED}; background: transparent;")
+            return
+        if access_control.verify_password(self._password.text()):
+            self._grant()
+        else:
+            self._password.clear()
+            self._status.setText("Access denied.")
+            self._status.setStyleSheet(f"color: {C.RED}; background: transparent;")
+            self._password.setFocus()
+
+    def _voice_action(self):
+        if self._voice_btn:
+            self._voice_btn.setEnabled(False)
+        self._status.setText("Listening for the access phrase…")
+        threading.Thread(target=self._voice_worker, daemon=True, name="JARVIS-Voice-Auth").start()
+
+    def _voice_worker(self):
+        try:
+            import sounddevice as sd
+            import speech_recognition as sr
+            import numpy as np
+            rate = 16000
+            pcm = sd.rec(int(rate * 4), samplerate=rate, channels=1, dtype="int16")
+            sd.wait()
+            data = sr.AudioData(np.asarray(pcm, dtype=np.int16).reshape(-1).tobytes(), rate, 2)
+            recognized = ""
+            last = None
+            for lang in ("en-IN", "en-US"):
+                try:
+                    recognized = sr.Recognizer().recognize_google(data, language=lang)
+                    if recognized:
+                        break
+                except Exception as exc:
+                    last = exc
+            if not recognized:
+                raise RuntimeError(str(last or "Speech was not recognized."))
+            self._voice_result.emit(recognized)
+        except Exception as exc:
+            self._voice_result.emit("ERROR: " + str(exc))
+
+    def _voice_finished(self, result: str):
+        if self._voice_btn:
+            self._voice_btn.setEnabled(True)
+        if result.startswith("ERROR:"):
+            self._status.setText(result)
+            self._status.setStyleSheet(f"color: {C.RED}; background: transparent;")
+            return
+        from core.access_control import verify_voice_phrase
+        if verify_voice_phrase(result):
+            self._grant()
+        else:
+            self._status.setText("Voice phrase did not match.")
+            self._status.setStyleSheet(f"color: {C.RED}; background: transparent;")
+
+    def _grant(self):
+        self.access_granted.emit()
+
+
+class MapOverlay(QWidget):
+    """Embedded Google Maps / Find My Device view without a visible URL bar."""
+
+    closed = pyqtSignal()
+
+    def __init__(self, url: str, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            MapOverlay {{
+                background: #000206;
+                border: 1px solid {C.BORDER_B};
+                border-radius: 8px;
+            }}
+        """)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        hdr = QHBoxLayout()
+        title = QLabel("◈  LOCATION MAP")
+        title.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        hdr.addWidget(title)
+        hdr.addStretch()
+        close = QPushButton("✕  CLOSE")
+        close.setFixedHeight(28)
+        close.clicked.connect(self._close)
+        hdr.addWidget(close)
+        root.addLayout(hdr)
+
+        if QWebEngineView is None:
+            msg = QLabel("Embedded map engine unavailable. Install PyQt6-WebEngine.")
+            msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            msg.setWordWrap(True)
+            msg.setStyleSheet(f"color: {C.RED}; background: transparent;")
+            root.addWidget(msg, stretch=1)
+            self._web = None
+        else:
+            self._web = QWebEngineView(self)
+            self._web.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+            self._web.load(QUrl(str(url)))
+            root.addWidget(self._web, stretch=1)
+
+    def _close(self):
+        self.hide()
+        self.closed.emit()
+
+
 class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
@@ -3053,6 +3286,9 @@ class MainWindow(QMainWindow):
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
         self._customize_overlay: CustomizeOverlay | None = None
+        self._access_overlay: AccessGateOverlay | None = None
+        self._access_granted = False
+        self._map_overlay: MapOverlay | None = None
 
         central = QWidget()
         central.setStyleSheet(f"background: {C.BG};")
@@ -3194,6 +3430,7 @@ class MainWindow(QMainWindow):
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
+        self._show_access_gate()
         try:
             from core.mode_manager import current_mode
             self.set_mode_display(current_mode())
