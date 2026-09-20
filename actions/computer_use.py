@@ -235,18 +235,69 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
                 if "Could not confirm" in launch_result or "Failed to open" in launch_result:
                     print(f"[ComputerUse] App launch was not confirmed: {launch_result}")
                 time.sleep(1.0)
+    previous_signature = None
+    repeated_count = 0
+
     for n in range(1,max_steps+1):
-        try: image,width,height=_screen()
-        except Exception as exc: return f"Computer-use failed to capture desktop: {exc}"
-        window=_window(); decision=_decide(goal,history,image,width,height,window)
-        if not decision: history.append({"step":str(n),"result":"No valid vision decision"}); time.sleep(.5); continue
+        try:
+            image,width,height=_screen()
+        except Exception as exc:
+            return f"Computer-use failed to capture desktop: {exc}"
+
+        window=_window()
+        decision=_decide(goal,history,image,width,height,window)
+        if not decision:
+            history.append({"step":str(n),"result":"No valid vision decision"})
+            time.sleep(.5)
+            continue
+
         action=str(decision.get("action","")).lower().strip()
+        params=dict(decision.get("parameters") or {})
+        if action == "hotkey":
+            params.setdefault("keys", decision.get("hotkey") or decision.get("keys") or "")
+        signature=json.dumps(
+            {"action":action, "parameters":params},
+            sort_keys=True, ensure_ascii=False
+        )
+
+        if signature == previous_signature:
+            repeated_count += 1
+        else:
+            repeated_count = 0
+        previous_signature = signature
+
+        if repeated_count >= 1 and action != "done":
+            # One repeated decision with no intervening screen change is enough
+            # to force a new visual decision rather than clicking/typing twice.
+            history.append({
+                "step":str(n),
+                "action":action,
+                "result":"Blocked repeated action: choose a different action from the current screenshot.",
+                "reason":str(decision.get("reason",""))[:200],
+            })
+            print(f"[ComputerUse] step {n}: blocked repeated {action}")
+            time.sleep(.2)
+            continue
+
         if action=="done":
             ok,evidence=_verify(goal,history,image,width,height,window)
-            if ok: return f"Computer-use completed and verified: {evidence}"
-            history.append({"step":str(n),"result":f"Done claim rejected: {evidence}"}); continue
-        result=_execute(decision); history.append({"step":str(n),"action":action,"result":result[:500]})
-        print(f"[ComputerUse] step {n}: {action} -> {result[:200]}"); time.sleep(.4)
+            if ok:
+                return f"Computer-use completed and verified: {evidence}"
+            history.append({
+                "step":str(n),
+                "result":f"Done claim rejected: {evidence}",
+            })
+            continue
+
+        result=_execute(decision)
+        history.append({
+            "step":str(n),
+            "action":action,
+            "result":result[:500],
+            "reason":str(decision.get("reason",""))[:200],
+        })
+        print(f"[ComputerUse] step {n}: {action} -> {result[:200]}")
+        time.sleep(.4)
         if any(x in result.lower() for x in ("failed","error:","rejected action")): continue
         if n % verify_every == 0:
             try:
