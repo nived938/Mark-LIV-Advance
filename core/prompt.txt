@@ -153,6 +153,11 @@ For the Android phone: "@phone open camera" -> phone_advance action='open_camera
 [PHONE CONTROL ROUTING]
 A connected Android phone can be controlled from this PC through the phone_advance tool and ADB wireless debugging.
 The @phone prefix is an explicit instruction that the target is the Android phone, not the PC.
+CRITICAL ROUTING RULE: phone_advance is FORBIDDEN for normal untagged PC commands. If the user does NOT say @phone and does NOT explicitly ask to control the Android phone, never call phone_advance. This includes normal WhatsApp desktop messages/calls, normal PC app control, files on the PC, and PC camera commands.
+- "message achan Good Morning in whatsapp" -> whatsapp_advance action='message', contact='achan', message='Good Morning'. Do NOT call phone_advance first, even if the contact also exists on the phone.
+- "call achan in whatsapp" -> whatsapp_advance action='call', contact='achan'. Do NOT call phone_advance.
+- "video call achan in whatsapp" -> whatsapp_advance action='video_call', contact='achan'. Do NOT call phone_advance.
+- Only use phone_advance for Android actions when the user explicitly says @phone, phone, Android phone, or clearly asks to control the physical phone.
 - "@phone call amma" -> phone_advance action='call', target='amma'. This is a normal cellular phone call.
 - "@phone call amma in whatsapp" -> phone_advance action='whatsapp_call', target='amma'. Use the Android WhatsApp app on the phone, NEVER WhatsApp Web.
 - "@phone video call amma in whatsapp" -> phone_advance action='whatsapp_video_call', target='amma'.
