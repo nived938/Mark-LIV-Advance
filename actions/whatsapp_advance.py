@@ -2,6 +2,7 @@ import os
 import time
 from pathlib import Path
 from urllib.parse import quote
+from difflib import SequenceMatcher
 
 try:
     import pyautogui
@@ -109,53 +110,100 @@ def _set_edit_text(control, text):
         return False
 
 
+def _norm_contact(value):
+    return " ".join(str(value or "").casefold().split()).strip()
+
+
+def _contact_match_score(candidate: str, target: str) -> int:
+    candidate_n = _norm_contact(candidate)
+    target_n = _norm_contact(target)
+    if not candidate_n or not target_n:
+        return -1
+    if candidate_n == target_n:
+        return 100
+    if candidate_n.startswith(target_n + " "):
+        return 92
+    if target_n.startswith(candidate_n + " "):
+        return 88
+    target_tokens = set(target_n.split())
+    candidate_tokens = set(candidate_n.split())
+    overlap = len(target_tokens & candidate_tokens)
+    ratio = SequenceMatcher(None, candidate_n, target_n).ratio()
+    if overlap:
+        return 70 + min(15, overlap * 5) + int(ratio * 10)
+    if ratio >= 0.72:
+        return 60 + int(ratio * 20)
+    return -1
+
+
 def _click_search_and_find(contact):
+    """Open a contact in the native WhatsApp app without browser/global-keyboard fallback."""
     win = _focus_whatsapp(8)
-    if not win:
-        return False, "WhatsApp desktop window did not appear."
+    if not win or not _is_native_whatsapp_window(win):
+        return False, "The native WhatsApp desktop window was not found."
 
-    for _ in range(8):
+    target = str(contact or "").strip()
+    if not target:
+        return False, "No WhatsApp contact was provided."
+
+    search = None
+    try:
+        for edit in _get_edits(win):
+            text_value = (edit.window_text() or "").casefold()
+            aid = (getattr(edit, "automation_id", lambda: "")() or "").casefold()
+            if "search" in text_value or "search" in aid:
+                search = edit
+                break
+    except Exception:
+        search = None
+
+    if search is None:
+        return False, "WhatsApp's native search box was not exposed to Windows UI Automation."
+
+    if not _set_edit_text(search, target):
+        return False, "Could not enter the contact into WhatsApp's native search box."
+
+    time.sleep(1.2)
+
+    candidates = []
+    try:
+        controls = win.descendants()
+    except Exception:
+        controls = []
+
+    for control in controls:
         try:
-            edits = _get_edits(win)
-            search = None
-            for edit in edits:
-                try:
-                    text = (edit.window_text() or "").lower()
-                    aid = (getattr(edit, "automation_id", lambda: "")() or "").lower()
-                    if "search" in text or "search" in aid:
-                        search = edit
-                        break
-                except Exception:
-                    pass
-            if search is None and edits:
-                search = edits[0]
-            if search and _set_edit_text(search, contact):
-                time.sleep(1.5)
-                if pyautogui:
-                    pyautogui.press("down")
-                    pyautogui.press("enter")
-                time.sleep(1.8)
-                return True, ""
+            control_type = str(control.element_info.control_type or "").casefold()
+            if control_type not in {"listitem", "treeitem", "dataitem", "text", "button"}:
+                continue
+            text_value = (control.window_text() or "").strip()
+            if not text_value:
+                continue
+            score = _contact_match_score(text_value, target)
+            if score >= 70:
+                candidates.append((score, text_value, control))
         except Exception:
-            pass
-        time.sleep(0.6)
+            continue
 
-    if pyautogui:
+    candidates.sort(key=lambda item: (-item[0], len(item[1])))
+
+    for _, _, control in candidates:
         try:
-            win.set_focus()
-            pyautogui.hotkey("ctrl", "f")
-            time.sleep(0.5)
-            pyautogui.hotkey("ctrl", "a")
-            pyautogui.write(contact, interval=0.04)
-            time.sleep(1.5)
-            pyautogui.press("down")
-            pyautogui.press("enter")
-            time.sleep(1.8)
+            control.invoke()
+            time.sleep(1.2)
             return True, ""
-        except Exception as e:
-            return False, str(e)
-    return False, "Could not access the WhatsApp search box."
+        except Exception:
+            try:
+                control.click_input()
+                time.sleep(1.2)
+                return True, ""
+            except Exception:
+                continue
 
+    return False, f"No native WhatsApp search result matched '{target}'."
+
+
+def _focus_message_box(win):
 
 def _focus_message_box(win):
     """Focus the actual chat composer, not the search field."""
@@ -264,12 +312,15 @@ def _verify_native_chat_target(win, contact: str) -> bool:
         except Exception:
             continue
 
+    best_score = -1
     for value in candidates:
-        normalized = " ".join(value.casefold().split()).strip()
-        if normalized == target:
-            return True
+        score = _contact_match_score(value, contact)
+        if score > best_score:
+            best_score = score
 
-    return False
+    # A short caller name such as "Malu" is allowed to match the actual
+    # WhatsApp display name "Malu Chechi", but an unrelated chat is not.
+    return best_score >= 70
 
 
 def _send_message_desktop(contact, message):
