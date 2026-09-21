@@ -217,6 +217,18 @@ class MobileGateway:
             await self._server.wait_closed()
             self._server = None
 
+    def command_sync(self, device_id: str, action: str, payload: dict | None = None, timeout: float = 20):
+        if self._loop is None:
+            return {"ok": False, "result": "Mobile gateway is not running."}
+        future = asyncio.run_coroutine_threadsafe(
+            self.command(device_id, action, payload, timeout),
+            self._loop,
+        )
+        try:
+            return future.result(timeout + 2)
+        except Exception as exc:
+            return {"ok": False, "result": str(exc)}
+
     async def command(self, device_id: str, action: str, payload: dict | None = None, timeout: float = 20):
         websocket = self._connections.get(str(device_id))
         if websocket is None:
