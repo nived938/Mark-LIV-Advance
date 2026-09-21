@@ -894,9 +894,33 @@ class JarvisLive:
         return url, key, f"{url}/auto-login?key={key}", manual
 
     def _on_whatsapp_incoming_call(self, call) -> None:
-        """Announce a native Windows WhatsApp incoming call and wait for the user."""
+        """Handle a native WhatsApp incoming call, optionally with auto busy reply."""
         caller = getattr(call, "caller", "someone") or "someone"
         self.ui.write_log(f"SYS: Incoming WhatsApp call from {caller}.")
+
+        try:
+            from actions.whatsapp_incoming_agent import get_busy_mode, auto_busy_reply
+            busy_enabled, _busy_message = get_busy_mode()
+        except Exception:
+            busy_enabled = False
+
+        if busy_enabled:
+            def _handle_busy():
+                try:
+                    ok, detail = auto_busy_reply(call)
+                    self.ui.write_log(
+                        f"SYS: WhatsApp auto-busy {'complete' if ok else 'failed'} — {detail}"
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: WhatsApp auto-busy failed — {exc}")
+
+            threading.Thread(
+                target=_handle_busy,
+                name="WhatsAppAutoBusyReply",
+                daemon=True,
+            ).start()
+            return
+
         # An incoming call is an external event that should reach the user even
         # when wake-word mode has put JARVIS to sleep.
         if self._wake_enabled and not self._awake:
