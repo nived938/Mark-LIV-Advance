@@ -124,6 +124,14 @@ def auto_busy_reply(call) -> tuple[bool, str]:
     except Exception as exc:
         one_way_detail = str(exc)
 
+    whatsapp_pid = None
+    try:
+        call_window = getattr(call, "window", None)
+        if call_window is not None:
+            whatsapp_pid = int(call_window.process_id())
+    except Exception:
+        whatsapp_pid = None
+
     ok, error = agent.accept()
     if not ok:
         try:
@@ -134,6 +142,13 @@ def auto_busy_reply(call) -> tuple[bool, str]:
         return False, f"Could not accept the WhatsApp call from {caller}: {error}"
 
     try:
+        if whatsapp_pid:
+            try:
+                from core.call_audio import ROUTER
+                ROUTER.bind_one_way_to_process(whatsapp_pid)
+            except Exception:
+                pass
+
         from actions.whatsapp_advance import _speak_to_active_call
         spoken, speech_error = _speak_to_active_call(
             message or f"Hello {caller}, unfortunately Nived is busy, Call him again later, Bye",
