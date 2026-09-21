@@ -339,24 +339,27 @@ class WhatsAppIncomingAgent:
                 timeout=1.2,
             )
             try:
+                # Windows notification DB schemas vary by Windows build.
+                # Notification.Id/Payload/ArrivalTime are stable here; the old
+                # join referenced NotificationHandler.Id, which does not exist
+                # on the user's schema and disabled this detector completely.
                 rows = conn.execute(
-                    "SELECT n.Id, n.Payload, n.ArrivalTime, h.PrimaryId "
+                    "SELECT n.Id, n.Payload, n.ArrivalTime "
                     "FROM Notification n "
-                    "LEFT JOIN NotificationHandler h ON n.HandlerId=h.Id "
                     "WHERE n.Type='toast' "
                     "ORDER BY n.ArrivalTime DESC LIMIT 80"
                 ).fetchall()
             finally:
                 conn.close()
 
-            for notification_id, payload, arrival, primary_id in rows:
+            for notification_id, payload, arrival in rows:
                 key = str(notification_id)
                 if key in self._wpndb_seen:
                     continue
                 self._wpndb_seen.add(key)
 
                 text = self._wpndb_text(str(payload or ""))
-                blob = f"{primary_id or ''} {text}".strip()
+                blob = text.strip()
                 low = self._norm(blob)
                 if "whatsapp" not in low:
                     continue
