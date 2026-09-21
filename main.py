@@ -1100,8 +1100,21 @@ class JarvisLive:
             print(f"[CallAttention] Announcement scheduling failed: {exc}")
 
     def _on_whatsapp_incoming_call(self, call) -> None:
-        """Handle a native WhatsApp incoming call, optionally with auto busy reply."""
-        caller = getattr(call, "caller", "someone") or "someone"
+        """Handle a native WhatsApp incoming call and its temporary call rules."""
+        caller = str(getattr(call, "caller", "") or "").strip()
+        try:
+            from actions.whatsapp_incoming_agent import get_incoming_agent
+            agent = get_incoming_agent()
+            pending = agent.pending
+            if pending and getattr(pending, "caller", ""):
+                caller = str(pending.caller).strip()
+            if not caller or caller.casefold() in {
+                "someone", "unknown caller", "the caller"
+            }:
+                caller = str(agent._best_whatsapp_chat_caller() or "").strip()
+        except Exception:
+            pass
+        caller = caller or "unknown caller"
         self.ui.write_log(f"SYS: Incoming WhatsApp call from {caller}.")
 
         try:
