@@ -14,7 +14,7 @@ TOOL = {
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "operation": {"type": "STRING", "description": "list | tv_pair_start | tv_pair_finish | tv_status | tv_control | tuya_add | tuya_control"},
+            "operation": {"type": "STRING", "description": "list | tv_discover | tv_pair_start | tv_pair_finish | tv_status | tv_control | tuya_add | tuya_control"},
             "name": {"type": "STRING", "description": "Friendly device name."},
             "host": {"type": "STRING", "description": "TV IP address for pairing."},
             "brand": {"type": "STRING", "description": "TV brand, default Panasonic."},
@@ -42,6 +42,8 @@ def smart_home_control(parameters=None, **_) -> str:
             f"- {x['name']} ({x['type']}) {x.get('brand','')}"
             for x in items
         )
+    if op == "tv_discover":
+        return SMART_HOME.tv_discover()
     if op == "tv_pair_start":
         return SMART_HOME.tv_pair_start(p.get("host", ""), p.get("name", ""), p.get("brand", "Panasonic"))
     if op == "tv_pair_finish":
@@ -57,4 +59,4 @@ def smart_home_control(parameters=None, **_) -> str:
         )
     if op == "tuya_control":
         return SMART_HOME.tuya_command(p.get("name", ""), p.get("action", ""), p.get("value", ""))
-    return "Use operation=list, tv_pair_start, tv_pair_finish, tv_status, tv_control, tuya_add, or tuya_control."
+    return "Use operation=list, tv_discover, tv_pair_start, tv_pair_finish, tv_status, tv_control, tuya_add, or tuya_control."
