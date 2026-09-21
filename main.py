@@ -644,6 +644,7 @@ class JarvisLive:
         self._whatsapp_incoming_agent = None       # Windows WhatsApp incoming-call monitor
         self._call_attention_monitor = None         # Generic desktop-call monitor
         self._call_event_seen: dict[str, float] = {}
+        self._whatsapp_rule_seen: dict[str, float] = {}
         self._call_speech_active = False
         self._pending_call_reports: list[dict] = []
         self._live_quota_until = 0.0
@@ -1252,6 +1253,25 @@ class JarvisLive:
         except Exception:
             pass
         caller = caller or "unknown caller"
+
+        # The dedicated WhatsApp detector and another native UI signal can
+        # describe the same ringing call milliseconds apart. Apply a single
+        # central debounce here so one physical call can never execute the
+        # temporary rule twice.
+        rule_key = f"{caller.casefold()}|whatsapp"
+        now_call = time.monotonic()
+        previous_call = self._whatsapp_rule_seen.get(rule_key, 0.0)
+        if now_call - previous_call < 12.0:
+            return
+        self._whatsapp_rule_seen[rule_key] = now_call
+        if len(self._whatsapp_rule_seen) > 100:
+            cutoff = now_call - 60.0
+            self._whatsapp_rule_seen = {
+                key: stamp
+                for key, stamp in self._whatsapp_rule_seen.items()
+                if stamp >= cutoff
+            }
+
         self.ui.write_log(f"SYS: Incoming WhatsApp call from {caller}.")
 
         # Temporary call rules are local and deterministic. WhatsApp has a
