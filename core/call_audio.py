@@ -447,6 +447,11 @@ class CallAudioRouter:
             self._loop = None
 
     @property
+    def one_way_active(self) -> bool:
+        with self._lock:
+            return self._one_way_active
+
+    @property
     def active(self):
         with self._lock:
             return self._active
