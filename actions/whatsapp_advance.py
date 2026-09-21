@@ -326,14 +326,9 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
         pending = agent.pending
         caller = pending.caller if pending else (contact or "the caller")
 
-        # Route WhatsApp's communications microphone/speaker through the two
-        # virtual cable pairs before answering, so call speech is real audio,
-        # not a chat message typed into the composer.
-        if message and bool(speak) and callable(_CALL_AUDIO_PREPARE):
-            prepared, prepare_error = _CALL_AUDIO_PREPARE()
-            if not prepared:
-                return f"Could not prepare call audio for {caller}: {prepare_error}"
-
+        # Accept the real call first. JARVIS call speech is an optional second step.
+        # A missing virtual audio bridge must never prevent the actual WhatsApp
+        # call from being answered.
         ok, error = agent.accept()
         if not ok:
             return f"Could not accept the incoming WhatsApp call from {caller}: {error}"
@@ -341,7 +336,15 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
         if message and bool(speak):
             spoken, speech_error = _speak_to_active_call(message, caller, bool(end_after))
             if not spoken:
-                return f"Accepted the WhatsApp call from {caller}, but could not speak to the caller: {speech_error}"
+                if end_after:
+                    try:
+                        agent.hang_up()
+                    except Exception:
+                        pass
+                return (
+                    f"Accepted the WhatsApp call from {caller}, but could not speak to "
+                    f"the caller: {speech_error}"
+                )
             return f"Accepted the WhatsApp call from {caller} and spoke the message."
         return f"Accepted the WhatsApp call from {caller}."
 
@@ -444,10 +447,10 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
             except Exception as e:
                 return f"Could not open the WhatsApp contact: {e}"
         kind = "video" if action == "video_call" else "voice"
-        if bool(speak) and call_intro and callable(_CALL_AUDIO_PREPARE):
-            prepared, prepare_error = _CALL_AUDIO_PREPARE()
-            if not prepared:
-                return f"Could not prepare call audio: {prepare_error}"
+
+        # Start the real WhatsApp call first. JARVIS call speech is optional.
+        # Without VB-CABLE/equivalent routing the call still works normally
+        # through WhatsApp's own microphone and speakers.
         ok, error = _click_call_button(kind)
         if not ok:
             return f"Opened WhatsApp to {target}, but I could not trigger the {kind} call control. {error}"
@@ -459,9 +462,12 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
                 False,
             )
             if not spoken:
-                return f"Started the WhatsApp {kind} call to {target}, but could not speak the introduction: {speech_error}"
+                return (
+                    f"Started the WhatsApp {kind} call to {target}, but JARVIS could not "
+                    f"speak the introduction: {speech_error}"
+                )
             return f"Started the WhatsApp {kind} call to {target} and spoke the introduction."
-        return f"Triggered the WhatsApp {kind} call control for {target}."
+        return f"Started the WhatsApp {kind} call to {target}."
 
     return "Unknown action. Use open_whatsapp, message, send, call, or video_call."
 
