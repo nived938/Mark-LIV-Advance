@@ -185,18 +185,37 @@ def _click_search_and_find(contact):
         except Exception:
             continue
 
-    candidates.sort(key=lambda item: (-item[0], len(item[1])))
+    # Prefer actual row/item controls over a Text/Button child inside some
+    # unrelated part of the chat. A clicked list item is our native proof that
+    # the WhatsApp search result matched the requested contact.
+    type_priority = {
+        "listitem": 0,
+        "treeitem": 1,
+        "dataitem": 2,
+        "button": 3,
+        "text": 4,
+    }
+    candidates.sort(
+        key=lambda item: (
+            -item[0],
+            type_priority.get(
+                str(item[2].element_info.control_type or "").casefold(),
+                9,
+            ),
+            len(item[1]),
+        )
+    )
 
-    for _, _, control in candidates:
+    for _, selected_name, control in candidates:
         try:
             control.invoke()
             time.sleep(1.2)
-            return True, ""
+            return True, selected_name
         except Exception:
             try:
                 control.click_input()
                 time.sleep(1.2)
-                return True, ""
+                return True, selected_name
             except Exception:
                 continue
 
@@ -331,15 +350,38 @@ def _send_message_desktop(contact, message):
     if not win:
         return False, "WhatsApp opened, but its desktop window was not detected."
 
-    ok, error = _click_search_and_find(contact)
+    # After a WhatsApp call ends, the caller's chat is often already the active
+    # native chat. Use it directly before performing another search.
+    if _verify_native_chat_target(win, contact):
+        ok, error = _type_and_send_message(win, message)
+        if not ok:
+            return False, error
+        return True, ""
+
+    ok, selected_name_or_error = _click_search_and_find(contact)
     if not ok:
-        return False, error
+        return False, selected_name_or_error
+
+    selected_name = str(selected_name_or_error or "").strip()
 
     win = _focus_whatsapp(5)
     if not win:
         return False, "WhatsApp chat opened, but its window disappeared."
 
-    if not _verify_native_chat_target(win, contact):
+    # Some current WhatsApp builds do not expose the selected chat header to
+    # UI Automation, so a second UIA scan can falsely report failure even though
+    # the native search row that was just clicked matched the contact. Only skip
+    # the second verification when the clicked native result itself is a strong
+    # contact match; never bypass the process/native-window check.
+    selected_score = _contact_match_score(selected_name, contact)
+    if selected_score < 70:
+        return (
+            False,
+            f"WhatsApp selected '{selected_name or 'an unknown result'}', "
+            f"which does not match '{contact}'. No message was typed or sent."
+        )
+
+    if not _verify_native_chat_target(win, contact) and selected_score < 88:
         return (
             False,
             f"Could not verify the native WhatsApp chat for '{contact}'. "
