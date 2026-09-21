@@ -31,8 +31,8 @@ def _norm(value: str) -> str:
 
 def _app_match(window, app: str) -> bool:
     want = _norm(app)
-    if not want:
-        return True
+    if want == "whatsapp":
+        return False
     title = ""
     try:
         title = _norm(window.window_text())
@@ -45,6 +45,10 @@ def _app_match(window, app: str) -> bool:
             proc = _norm(psutil.Process(int(window.process_id())).name())
         except Exception:
             pass
+
+    # WhatsApp calling is intentionally excluded from the generic controller.
+    if "whatsapp" in title or "whatsapp" in proc:
+        return False
 
     return (
         want in title
