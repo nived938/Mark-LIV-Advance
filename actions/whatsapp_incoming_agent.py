@@ -13,12 +13,14 @@ existing UI controls or visual coordinates are used to accept/decline it.
 from __future__ import annotations
 
 import ctypes
+import json
 import re
 import threading
 import time
 from ctypes import wintypes
 from dataclasses import dataclass
 from typing import Callable, Optional
+from pathlib import Path
 
 try:
     from pywinauto import Desktop
@@ -52,6 +54,73 @@ try:
 except Exception:
     NotificationKinds = None
     UserNotificationListener = None
+
+
+_BASE_DIR = Path(__file__).resolve().parent.parent
+_WHATSAPP_SETTINGS_PATH = _BASE_DIR / "memory" / "whatsapp_settings.json"
+_DEFAULT_BUSY_MESSAGE = "I'm busy right now. I'll get back to you later."
+
+
+def _load_busy_settings() -> dict:
+    try:
+        data = json.loads(_WHATSAPP_SETTINGS_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def get_busy_mode() -> tuple[bool, str]:
+    data = _load_busy_settings()
+    enabled = bool(data.get("auto_busy_reply", False))
+    message = str(data.get("busy_message") or _DEFAULT_BUSY_MESSAGE).strip()
+    return enabled, message or _DEFAULT_BUSY_MESSAGE
+
+
+def set_busy_mode(enabled: bool, message: str = "") -> str:
+    data = _load_busy_settings()
+    data["auto_busy_reply"] = bool(enabled)
+    if str(message or "").strip():
+        data["busy_message"] = str(message).strip()
+    elif not str(data.get("busy_message") or "").strip():
+        data["busy_message"] = _DEFAULT_BUSY_MESSAGE
+
+    _WHATSAPP_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _WHATSAPP_SETTINGS_PATH.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    state = "enabled" if enabled else "disabled"
+    return f"Automatic WhatsApp busy reply {state}. Message: {data['busy_message']}"
+
+
+def auto_busy_reply(call) -> tuple[bool, str]:
+    """Decline an incoming WhatsApp call and send the configured busy message."""
+    enabled, message = get_busy_mode()
+    if not enabled:
+        return False, "Automatic busy reply is disabled."
+
+    agent = get_incoming_agent()
+    caller = str(getattr(call, "caller", "") or "").strip()
+    if not caller or caller.lower() in {"someone", "unknown caller", "the caller"}:
+        caller = agent._best_whatsapp_chat_caller()
+
+    ok, error = agent.decline()
+    if not ok:
+        return False, f"Could not decline the WhatsApp call from {caller or 'the caller'}: {error}"
+
+    if not caller:
+        return True, "Call declined, but the caller could not be identified for the busy message."
+
+    try:
+        from actions.whatsapp_advance import _send_message_desktop
+        sent, send_error = _send_message_desktop(caller, message)
+    except Exception as exc:
+        sent, send_error = False, str(exc)
+
+    if not sent:
+        return False, f"Declined the WhatsApp call from {caller}, but could not send the busy message: {send_error}"
+
+    return True, f"Declined the WhatsApp call from {caller} and sent the busy message."
 
 
 _GENERIC = {
