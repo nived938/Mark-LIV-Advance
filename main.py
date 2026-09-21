@@ -1229,12 +1229,44 @@ class JarvisLive:
                             True,
                             "WhatsApp",
                         )
-                        if not spoken:
+
+                        if spoken:
+                            outcome = "auto-busy"
+                            detail = "spoke the busy message and ended the call."
+                        else:
+                            # JARVIS voice injection needs the optional virtual
+                            # audio bridge. Never let that hardware dependency
+                            # turn an accepted call into a false failure. Hang up
+                            # and send the same busy message as a normal WhatsApp
+                            # chat message instead.
                             try:
                                 agent.hang_up()
                             except Exception:
                                 pass
-                        outcome = "auto-busy" if spoken else "auto-busy-failed"
+
+                            sent, send_error = False, ""
+                            try:
+                                from actions.whatsapp_advance import _send_message_desktop
+                                sent, send_error = _send_message_desktop(
+                                    caller,
+                                    busy_message,
+                                )
+                            except Exception as exc:
+                                send_error = str(exc)
+
+                            if sent:
+                                outcome = "auto-busy-message-fallback"
+                                detail = (
+                                    "voice call accepted, but JARVIS call audio "
+                                    "was unavailable; sent the busy message in WhatsApp."
+                                )
+                            else:
+                                outcome = "auto-busy-failed"
+                                detail = (
+                                    f"voice call speech unavailable ({speech_error}); "
+                                    f"WhatsApp fallback message also failed ({send_error})."
+                                )
+
                         record_call(
                             "WhatsApp",
                             caller,
@@ -1245,8 +1277,8 @@ class JarvisLive:
                         self._queue_call_report("WhatsApp", caller, outcome)
                         self.ui.write_log(
                             f"SYS: WhatsApp temporary busy rule "
-                            f"{'complete' if spoken else 'failed'} — "
-                            f"{speech_error or 'done'}"
+                            f"{'complete' if outcome != 'auto-busy-failed' else 'failed'} — "
+                            f"{detail}"
                         )
                     except Exception as exc:
                         try:
