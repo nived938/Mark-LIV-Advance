@@ -378,18 +378,33 @@ class CallAudioRouter:
             capture_name = str(self._one_way_capture_device_name or "").strip()
         if not capture_name:
             return False, "The one-way capture device is unknown."
-        try:
-            import winappaudiorouter as war
-            war.set_app_input_device(
-                pid=int(process_id),
-                device=capture_name,
-            )
-            return True, (
-                f"WhatsApp microphone routed to '{capture_name}' "
-                f"for process {int(process_id)}."
-            )
-        except Exception as exc:
-            return False, f"Could not bind the WhatsApp microphone to '{capture_name}': {exc}"
+        last_error = ""
+        for attempt in range(1, 7):
+            try:
+                import winappaudiorouter as war
+                result = war.set_app_input_device(
+                    process_id=int(process_id),
+                    device=capture_name,
+                )
+                if result:
+                    return True, (
+                        f"WhatsApp microphone routed to '{capture_name}' "
+                        f"for process {int(process_id)}."
+                    )
+                last_error = "WhatsApp has no active input audio session yet."
+            except Exception as exc:
+                last_error = str(exc)
+
+            # WhatsApp may create its recording session asynchronously after
+            # the call is accepted. Give the Windows audio service time to expose
+            # the session, then retry the exact PID.
+            if attempt < 6:
+                time.sleep(0.4)
+
+        return False, (
+            f"Could not bind the WhatsApp microphone to '{capture_name}' "
+            f"for process {int(process_id)}: {last_error}"
+        )
 
     def speak_one_way(self, text: str) -> tuple[bool, str]:
         """Speak through the normal Windows output so Stereo Mix carries it to WhatsApp."""
