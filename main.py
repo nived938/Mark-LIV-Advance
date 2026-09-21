@@ -1282,6 +1282,9 @@ class JarvisLive:
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
+        cancel_event = threading.Event() if name == "computer_use" else None
+        if cancel_event is not None:
+            args["_cancel_event"] = cancel_event
 
         print(f"[JARVIS] 🔧 {name}  {args}")
         if self._needs_task_terminal(name):
@@ -1412,8 +1415,18 @@ class JarvisLive:
                     args["file_path"] = self.ui.current_file
                 _ctx = {"player": self.ui, "speak": self.speak,
                         "response": None, "session_memory": None}
-                r = await loop.run_in_executor(None, lambda: self._action_registry.run(name, args, _ctx))
-                result = r or "Done."
+                try:
+                    r = await loop.run_in_executor(
+                        None,
+                        lambda: self._action_registry.run(name, args, _ctx),
+                    )
+                    result = r or "Done."
+                finally:
+                    # asyncio cancellation cannot kill an executor thread. Signal
+                    # cooperative cancellation so computer_use stops before its
+                    # next screenshot/focus/click/type action.
+                    if cancel_event is not None:
+                        cancel_event.set()
                 # Keep search results visible in JARVIS while the voice answer stays brief.
                 if r and name in {"web_search", "file_search_advance", "mark32_advance"}:
                     if name == "file_search_advance":
