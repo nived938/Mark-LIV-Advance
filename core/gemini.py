@@ -121,10 +121,10 @@ LIVE = "live"
 _LADDERS = {
     # Current stable Gemini 3.x models. The older 2.5 REST IDs in the user's
     # logs returned 404, so keep those IDs out of the default ladder.
-    FAST: ("gemini-3.6-flash", "gemini-3.5-flash-lite", LIVE),
-    SMART: ("gemini-3.7-flash", "gemini-3.6-flash", LIVE),
+    FAST: ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", LIVE),
+    SMART: ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", LIVE),
     # Grounded search needs REST responses with grounding metadata.
-    SEARCH: ("gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.7-flash"),
+    SEARCH: ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"),
 }
 
 # The Live model to use for one-shot calls. main.py owns the real one; this is
@@ -195,6 +195,15 @@ def _cooling(model: str) -> bool:
             return True
         _cooldown.pop(model, None)
         return False
+
+
+def _cool_transient(model: str, seconds: int = 45) -> None:
+    """Temporarily skip a model after a transient 503/504 service failure."""
+    with _cool_lock:
+        _cooldown[model] = max(
+            _cooldown.get(model, 0.0),
+            time.monotonic() + max(15, int(seconds)),
+        )
 
 
 def api_key(refresh: bool = False) -> str:
@@ -413,10 +422,25 @@ def call(contents, tier: str = FAST, config=None,
             return cl.models.generate_content(**kwargs)
         except Exception as e:
             msg = str(e)
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+            msg_low = msg.casefold()
+            if "429" in msg or "resource_exhausted" in msg_low:
                 _cool(model)
-                print(f"[Gemini] {model}: out of quota — skipping it for "
-                      f"{_COOLDOWN_SECONDS // 60} minutes")
+                print(
+                    f"[Gemini] {model}: out of quota — skipping it for "
+                    f"{_COOLDOWN_SECONDS // 60} minutes"
+                )
+            elif (
+                "503" in msg
+                or "504" in msg
+                or "unavailable" in msg_low
+                or "deadline_exceeded" in msg_low
+            ):
+                seconds = 60 if ("504" in msg or "deadline_exceeded" in msg_low) else 45
+                _cool_transient(model, seconds)
+                print(
+                    f"[Gemini] {model}: temporary service failure "
+                    f"({type(e).__name__}) — trying the next model"
+                )
             else:
                 print(f"[Gemini] {model}: {type(e).__name__}: {msg[:140]}")
     return None
