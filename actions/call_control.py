@@ -171,3 +171,7 @@ def call_control(parameters: dict | None = None, **_) -> str:
             continue
 
     return "No matching ringing call control was found."
+
+# Action handler registration
+TOOL["handler"] = call_control
+

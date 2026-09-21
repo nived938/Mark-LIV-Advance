@@ -28,3 +28,7 @@ def call_audio(parameters=None, **_) -> str:
         ROUTER.stop()
         return "Call audio bridge reset; normal Windows communications audio restored."
     return "Use action=status or reset."
+
+# Action handler registration
+TOOL["handler"] = call_audio
+

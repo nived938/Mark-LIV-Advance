@@ -73,3 +73,7 @@ def android_connect(parameters=None, **_) -> str:
         return str(result)
 
     return "Use action=pair, list, command, or revoke."
+
+# Action handler registration
+TOOL["handler"] = android_connect
+

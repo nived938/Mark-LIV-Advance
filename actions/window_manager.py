@@ -181,3 +181,7 @@ def window_manager(parameters=None, **_) -> str:
         int(p.get("target") or 0),
         str(p.get("direction") or "next").strip().lower(),
     )
+
+# Action handler registration
+TOOL["handler"] = window_manager
+

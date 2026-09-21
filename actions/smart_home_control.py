@@ -60,3 +60,7 @@ def smart_home_control(parameters=None, **_) -> str:
     if op == "tuya_control":
         return SMART_HOME.tuya_command(p.get("name", ""), p.get("action", ""), p.get("value", ""))
     return "Use operation=list, tv_discover, tv_pair_start, tv_pair_finish, tv_status, tv_control, tuya_add, or tuya_control."
+
+# Action handler registration
+TOOL["handler"] = smart_home_control
+

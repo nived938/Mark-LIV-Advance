@@ -55,3 +55,7 @@ def call_rules(parameters: dict | None = None, **_) -> str:
     if action == "history":
         return history_text(12)
     return "Use action=busy, accept, clear, status, or history."
+
+# Action handler registration
+TOOL["handler"] = call_rules
+

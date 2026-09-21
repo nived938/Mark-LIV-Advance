@@ -87,3 +87,7 @@ def system_settings(parameters=None, **_) -> str:
         return "Bluetooth cycle complete." if ok else f"Bluetooth was turned off but could not be turned back on: {detail}"
 
     return "Use action=bluetooth_on, bluetooth_off, bluetooth_cycle, or open_bluetooth_settings."
+
+# Action handler registration
+TOOL["handler"] = system_settings
+
