@@ -106,24 +106,43 @@ def auto_busy_reply(call) -> tuple[bool, str]:
     caller = str(getattr(call, "caller", "") or "").strip()
     if not caller or caller.lower() in {"someone", "unknown caller", "the caller"}:
         caller = agent._best_whatsapp_chat_caller()
+    caller = caller or "there"
 
-    ok, error = agent.decline()
+    # Prepare the virtual call-audio route before accepting. This is what makes
+    # the subsequent speech go to the phone instead of the WhatsApp chat box.
+    try:
+        from actions.whatsapp_advance import _CALL_AUDIO_PREPARE
+        if callable(_CALL_AUDIO_PREPARE):
+            prepared, prepare_error = _CALL_AUDIO_PREPARE()
+            if not prepared:
+                return False, prepare_error
+    except Exception as exc:
+        return False, f"Call audio bridge unavailable: {exc}"
+
+    ok, error = agent.accept()
     if not ok:
-        return False, f"Could not decline the WhatsApp call from {caller or 'the caller'}: {error}"
-
-    if not caller:
-        return True, "Call declined, but the caller could not be identified for the busy message."
+        try:
+            from core.call_audio import ROUTER
+            ROUTER.stop()
+        except Exception:
+            pass
+        return False, f"Could not accept the WhatsApp call from {caller}: {error}"
 
     try:
-        from actions.whatsapp_advance import _send_message_desktop
-        sent, send_error = _send_message_desktop(caller, message)
+        from actions.whatsapp_advance import _speak_to_active_call
+        spoken, speech_error = _speak_to_active_call(
+            message or f"Hello {caller}, unfortunately Nived is busy, Call him again later, Bye",
+            caller,
+            True,
+        )
+        return spoken, speech_error
     except Exception as exc:
-        sent, send_error = False, str(exc)
-
-    if not sent:
-        return False, f"Declined the WhatsApp call from {caller}, but could not send the busy message: {send_error}"
-
-    return True, f"Declined the WhatsApp call from {caller} and sent the busy message."
+        try:
+            from core.call_audio import ROUTER
+            ROUTER.stop()
+        except Exception:
+            pass
+        return False, str(exc)
 
 
 _GENERIC = {
