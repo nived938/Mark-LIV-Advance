@@ -543,6 +543,19 @@ def _keep_context_of(exc: BaseException) -> bool:
     return True
 
 
+def _exception_text(exc: BaseException) -> str:
+    """Flatten ExceptionGroup/TaskGroup errors into searchable text."""
+    if isinstance(exc, BaseExceptionGroup):
+        parts = [_exception_text(sub) for sub in exc.exceptions]
+        return " | ".join(part for part in parts if part)
+    return str(exc)
+
+
+def _exception_has(exc: BaseException, *needles: str) -> bool:
+    text_value = _exception_text(exc).casefold()
+    return any(str(needle).casefold() in text_value for needle in needles)
+
+
 class JarvisLive:
     def __init__(self, ui: JarvisUI):
         self.ui             = ui
@@ -840,6 +853,7 @@ class JarvisLive:
             return
         self._shutdown_requested = True
         self._cancel_active_tools()
+
         try:
             if self._whatsapp_incoming_agent is not None:
                 self._whatsapp_incoming_agent.stop()
@@ -854,22 +868,40 @@ class JarvisLive:
             CALL_AUDIO.stop()
         except Exception:
             pass
-        try:
-            if getattr(self, "_loop", None):
-                awaitable = GATEWAY.stop()
-                asyncio.create_task(awaitable)
-        except Exception:
-            pass
+
+        # This method is called by the Qt thread, not the asyncio thread.
+        # Never create GATEWAY.stop() here directly: doing so constructs a
+        # coroutine that may never be awaited. Instead enqueue the coroutine
+        # creation itself onto the live event loop.
         loop = getattr(self, "_loop", None)
-        if loop and not loop.is_closed():
+        if loop is not None and loop.is_running() and not loop.is_closed():
+            def _schedule_cleanup():
+                try:
+                    dashboard = getattr(self, "_dashboard", None)
+                    if dashboard is not None:
+                        dashboard.stop()
+                except Exception:
+                    pass
+                try:
+                    asyncio.create_task(GATEWAY.stop())
+                except Exception:
+                    pass
+
+            try:
+                loop.call_soon_threadsafe(_schedule_cleanup)
+            except Exception:
+                pass
+
             def _cancel_run():
                 task = self._run_task
                 if task is not None and not task.done():
                     task.cancel()
+
             try:
                 loop.call_soon_threadsafe(_cancel_run)
             except Exception:
                 pass
+
         try:
             self.ui.write_log("SYS: JARVIS shutting down.")
         except Exception:
@@ -2876,7 +2908,12 @@ class JarvisLive:
             remaining_quota = self._live_quota_until - time.monotonic()
             if remaining_quota > 0:
                 self.ui.set_state("SLEEPING")
-                await asyncio.sleep(min(60.0, remaining_quota))
+                try:
+                    await asyncio.sleep(min(60.0, remaining_quota))
+                except asyncio.CancelledError:
+                    if self._shutdown_requested:
+                        break
+                    raise
                 continue
 
             try:
@@ -2959,10 +2996,18 @@ class JarvisLive:
             except SystemExit:
                 raise
             except BaseException as e:
-                if self._shutdown_requested:
+                if self._shutdown_requested or (
+                    isinstance(e, asyncio.CancelledError)
+                    and self._shutdown_requested
+                ):
                     print("[JARVIS] Shutdown requested — stopping session supervisor.")
                     break
-                err_text = str(e)
+
+                # TaskGroup wraps socket/API failures in ExceptionGroup. Search
+                # the actual child errors so transient Live failures are handled
+                # consistently and do not produce a misleading traceback.
+                err_text = _exception_text(e)
+                err_low = err_text.casefold()
                 if (
                     self._interrupted
                     and "1008" in err_text
@@ -3007,9 +3052,6 @@ class JarvisLive:
                     self._conn_backoff = 0
                     continue
 
-                err_str = str(e)
-                err_low = err_str.casefold()
-
                 if (
                     "1011" in err_str
                     and "quota" in err_low
@@ -3028,13 +3070,26 @@ class JarvisLive:
                         self._last_live_error = message
                     continue
 
-                if "1011" in err_str or "internal error encountered" in err_low:
+                if (
+                    "1011" in err_text
+                    or "internal error encountered" in err_low
+                    or "503" in err_text
+                    or "504" in err_text
+                    or "service unavailable" in err_low
+                    or "deadline_exceeded" in err_low
+                ):
                     self._conn_backoff = min(
                         max(getattr(self, "_conn_backoff", 3) * 2, 6),
                         60,
                     )
+                    if "503" in err_text or "service unavailable" in err_low:
+                        reason = "service temporarily unavailable"
+                    elif "504" in err_text or "deadline_exceeded" in err_low:
+                        reason = "request timed out"
+                    else:
+                        reason = "internal error"
                     message = (
-                        f"NET: Gemini Live internal error — retrying in "
+                        f"NET: Gemini Live {reason} — retrying in "
                         f"{self._conn_backoff}s."
                     )
                     if message != self._last_live_error:
@@ -3043,10 +3098,10 @@ class JarvisLive:
                         self._last_live_error = message
                     continue
 
-                if err_str != self._last_live_error:
-                    print(f"[JARVIS] Error ({type(e).__name__}): {e}")
-                    traceback.print_exc()
-                    self._last_live_error = err_str[:300]
+                if err_text != self._last_live_error:
+                    print(f"[JARVIS] Error ({type(e).__name__}): {err_text[:300]}")
+                    traceback.print_exception(e)
+                    self._last_live_error = err_text[:300]
 
                 # Turn-taking / media / thinking knobs rejected by the server
                 # (preview API drift) — drop them first, because they are the
@@ -3135,10 +3190,17 @@ class JarvisLive:
             CALL_AUDIO.stop()
         except Exception:
             pass
+
+        # We are already inside the JARVIS asyncio loop here, so await async
+        # cleanup directly. No coroutine is created from the Qt thread.
         try:
-            if getattr(self, "_loop", None):
-                awaitable = GATEWAY.stop()
-                asyncio.create_task(awaitable)
+            dashboard = getattr(self, "_dashboard", None)
+            if dashboard is not None:
+                dashboard.stop()
+        except Exception:
+            pass
+        try:
+            await GATEWAY.stop()
         except Exception:
             pass
         try:
@@ -3159,8 +3221,10 @@ def main():
         jarvis = JarvisLive(ui)
         try:
             asyncio.run(jarvis.run())
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
             print("\n🔴 Shutting down...")
+        except Exception as exc:
+            print(f"[JARVIS] Fatal supervisor error: {type(exc).__name__}: {exc}")
 
     threading.Thread(target=runner, daemon=True).start()
     ui.root.mainloop()
