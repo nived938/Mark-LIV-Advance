@@ -84,6 +84,7 @@ from core.call_attention      import CallAttentionMonitor
 from core.boot_sentry          import restore_broken_modules
 from core.call_audio           import ROUTER as CALL_AUDIO
 from core.call_manager         import active_rule, record_call, history_text
+from core.mobile_gateway        import GATEWAY
 from core                      import audio_devices
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
@@ -852,6 +853,12 @@ class JarvisLive:
             CALL_AUDIO.stop()
         except Exception:
             pass
+        try:
+            if getattr(self, "_loop", None):
+                awaitable = GATEWAY.stop()
+                asyncio.create_task(awaitable)
+        except Exception:
+            pass
         loop = getattr(self, "_loop", None)
         if loop and not loop.is_closed():
             def _cancel_run():
@@ -928,8 +935,8 @@ class JarvisLive:
 
     def _prepare_call_audio(self):
         loop = getattr(self, "_loop", None)
-        if loop is None or self.out_queue is None:
-            return False, "JARVIS audio session is not ready."
+        if loop is None:
+            return False, "JARVIS audio loop is not ready."
         return CALL_AUDIO.begin(loop, self._enqueue_caller_audio)
 
     def _enqueue_caller_audio(self, packet) -> None:
@@ -945,8 +952,8 @@ class JarvisLive:
         if not message:
             return False, "No call message was provided."
         loop = getattr(self, "_loop", None)
-        if loop is None or self.out_queue is None:
-            return False, "JARVIS audio session is not ready."
+        if loop is None:
+            return False, "JARVIS audio loop is not ready."
 
         ok, detail = CALL_AUDIO.begin(loop, self._enqueue_caller_audio)
         if not ok:
@@ -1472,7 +1479,8 @@ class JarvisLive:
             "meeting_copilot", "knowledge_vault", "workflow_recorder",
             "event_rules", "hardware_diagnostics", "self_updater",
             "learning_rules", "self_heal", "smart_desktop", "office_builder",
-            "android_autopilot", "call_control", "call_rules", "call_audio",
+            "android_autopilot", "android_connect", "smart_home_control",
+            "call_control", "call_rules", "call_audio", "system_settings", "window_manager",
             "jarvis_services", "public_api",
         }
 
@@ -2581,6 +2589,12 @@ class JarvisLive:
         # for host-API enumeration on the Qt thread.
         audio_devices.prefetch()
 
+        # Start local Android companion gateway independently of Gemini Live.
+        try:
+            asyncio.create_task(GATEWAY.start())
+        except Exception as e:
+            print(f"[MobileGateway] Disabled: {e}")
+
         # Start dashboard (optional — needs: pip install fastapi "uvicorn[standard]" cryptography)
         try:
             from dashboard.server import DashboardServer
@@ -2899,6 +2913,12 @@ class JarvisLive:
             pass
         try:
             CALL_AUDIO.stop()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_loop", None):
+                awaitable = GATEWAY.stop()
+                asyncio.create_task(awaitable)
         except Exception:
             pass
         try:
