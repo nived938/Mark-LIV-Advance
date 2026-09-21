@@ -3191,7 +3191,6 @@ class MainWindow(QMainWindow):
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
         self._cam_control_sig.connect(self._apply_camera_control)
-        self._clipboard_sig.connect(self._show_clipboard_panel)
         self._wake_dl_sig.connect(self._on_wake_install_done)
         self._quiz_sig.connect(self._show_quiz)
         self._quiz_hide_sig.connect(self._hide_quiz)
@@ -3207,10 +3206,9 @@ class MainWindow(QMainWindow):
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
 
-        # Clipboard panel (child of central widget, bottom-center)
-        self._clipboard_panel = ClipboardPanel(self.centralWidget())
-        self._clipboard_panel.action_requested.connect(self._on_clipboard_action)
-        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
+        # Automatic clipboard monitoring is disabled. Copying text no longer
+        # feeds clipboard contents into JARVIS or triggers any spoken response.
+        # Explicit clipboard commands remain available when requested by the user.
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
@@ -5480,32 +5478,8 @@ class MainWindow(QMainWindow):
         self._plugin_settings_overlay = ov   # keep a reference so it isn't GC'd
 
     # ── Clipboard intelligence ───────────────────────────────────────────────────
-
-    def _on_clipboard_changed(self):
-        try:
-            text = QApplication.clipboard().text().strip()
-            if len(text) >= 10:
-                self._clipboard_sig.emit(text)
-        except Exception:
-            pass
-
-    def _show_clipboard_panel(self, text: str):
-        self._clipboard_panel.show_clipboard(text)
-        self._position_clipboard_panel()
-
-    def _position_clipboard_panel(self):
-        cw = self.centralWidget()
-        pw = ClipboardPanel._W
-        ph = self._clipboard_panel.sizeHint().height() or ClipboardPanel._H
-        x = (cw.width() - pw) // 2
-        y = cw.height() - ph - 6
-        self._clipboard_panel.setGeometry(x, y, pw, ph)
-        self._clipboard_panel.raise_()
-
-    def _on_clipboard_action(self, cmd: str):
-        if self.on_text_command:
-            threading.Thread(target=self.on_text_command, args=(cmd,), daemon=True).start()
-
+    # Automatic clipboard detection was removed. The OS clipboard is used only
+    # when an explicit clipboard action is requested by the user.
     # ────────────────────────────────────────────────────────────────────────────
 
     def _do_interrupt(self):
