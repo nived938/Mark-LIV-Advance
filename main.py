@@ -1229,6 +1229,11 @@ class JarvisLive:
                             True,
                             "WhatsApp",
                         )
+                        if not spoken:
+                            try:
+                                agent.hang_up()
+                            except Exception:
+                                pass
                         outcome = "auto-busy" if spoken else "auto-busy-failed"
                         record_call(
                             "WhatsApp",
