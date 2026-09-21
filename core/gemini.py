@@ -419,6 +419,12 @@ def call(contents, tier: str = FAST, config=None,
             kwargs = {"model": model, "contents": contents}
             if config is not None:
                 kwargs["config"] = config
+            else:
+                kwargs["config"] = {
+                    "automatic_function_calling": {
+                        "disable": True,
+                    }
+                }
             return cl.models.generate_content(**kwargs)
         except Exception as e:
             msg = str(e)
