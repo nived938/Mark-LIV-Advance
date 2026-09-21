@@ -242,3 +242,6 @@ def android_autopilot(parameters: dict | None = None, **_) -> str:
         return f"Opened {package}." if ok2 else f"Open app failed: {err}"
 
     return "Unknown Android autopilot operation."
+
+# Action handler registration
+TOOL["handler"] = android_autopilot
