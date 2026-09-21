@@ -58,3 +58,6 @@ def learning_rules(parameters: dict | None = None, **_) -> str:
         return "\n".join(lines)
 
     return "Use action=learn, forget, list, enable, or disable."
+
+# Action handler registration
+TOOL["handler"] = learning_rules
