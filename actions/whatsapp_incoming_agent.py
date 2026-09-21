@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 import re
+import sqlite3
 import threading
 import time
+import xml.etree.ElementTree as ET
 from ctypes import wintypes
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -160,7 +163,9 @@ class WhatsAppIncomingAgent:
         self._last_signature = ""
         self._last_seen_at = 0.0
         self._notification_seen: set[str] = set()
+        self._wpndb_seen: set[str] = set()
         self._notification_ready_logged = False
+        self._wpndb_logged = False
         self._visual_last_log = 0.0
         self._visual_present = False
         self._event_cooldown_until = 0.0
@@ -226,6 +231,95 @@ class WhatsAppIncomingAgent:
             return "whatsapp" in blob
         except Exception:
             return False
+
+    # ------------------------------------------------------------------
+    # Detector 1A: Windows notification database (WPNDB)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _notification_db_path():
+        if os.name != "nt":
+            return None
+        base = os.environ.get("LOCALAPPDATA", "")
+        if not base:
+            return None
+        path = Path(base) / "Microsoft" / "Windows" / "Notifications" / "wpndatabase.db"
+        return path if path.exists() else None
+
+    @staticmethod
+    def _wpndb_text(payload: str) -> str:
+        try:
+            root = ET.fromstring(payload)
+        except Exception:
+            return ""
+        values = []
+        for element in root.iter():
+            if element.tag.split("}")[-1] == "text" and element.text:
+                value = str(element.text).strip()
+                if value:
+                    values.append(value)
+        return " | ".join(values)
+
+    def _poll_notification_db(self):
+        path = self._notification_db_path()
+        if path is None:
+            return None
+
+        try:
+            conn = sqlite3.connect(
+                f"file:{path}?mode=ro",
+                uri=True,
+                timeout=1.2,
+            )
+            try:
+                rows = conn.execute(
+                    "SELECT n.Id, n.Payload, n.ArrivalTime, h.PrimaryId "
+                    "FROM Notification n "
+                    "LEFT JOIN NotificationHandler h ON n.HandlerId=h.Id "
+                    "WHERE n.Type='toast' "
+                    "ORDER BY n.ArrivalTime DESC LIMIT 80"
+                ).fetchall()
+            finally:
+                conn.close()
+
+            for notification_id, payload, arrival, primary_id in rows:
+                key = str(notification_id)
+                if key in self._wpndb_seen:
+                    continue
+                self._wpndb_seen.add(key)
+
+                text = self._wpndb_text(str(payload or ""))
+                blob = f"{primary_id or ''} {text}".strip()
+                low = self._norm(blob)
+                if "whatsapp" not in low:
+                    continue
+                if not any(
+                    hint in low
+                    for hint in (
+                        "incoming call",
+                        "calling",
+                        "voice call",
+                        "video call",
+                        "incoming voice",
+                        "incoming video",
+                    )
+                ):
+                    continue
+
+                caller = self._caller_from_text(text or blob)
+                return caller, text or blob
+
+            if len(self._wpndb_seen) > 1000:
+                self._wpndb_seen = set(list(self._wpndb_seen)[-500:])
+        except sqlite3.Error as exc:
+            if not self._wpndb_logged:
+                print(f"[WhatsAppAgent] WPN database unavailable: {exc}")
+                self._wpndb_logged = True
+        except Exception as exc:
+            if not self._wpndb_logged:
+                print(f"[WhatsAppAgent] WPN database detector error: {exc}")
+                self._wpndb_logged = True
+        return None
 
     # ------------------------------------------------------------------
     # Detector 1: Windows notifications
@@ -599,11 +693,15 @@ class WhatsAppIncomingAgent:
             return None
         sources = []
         caller = ""
+        db_notification = self._poll_notification_db()
+        if db_notification:
+            caller = db_notification[0]
+            sources.append("wpndb")
 
         # Detector 1.
         notification = self._poll_notifications()
         if notification:
-            caller = notification[0]
+            caller = caller or notification[0]
             sources.append("notification")
 
         # Detector 3a: UI Automation.
@@ -634,7 +732,7 @@ class WhatsAppIncomingAgent:
         # Detector 2: visual controls. This is intentionally independent of
         # WhatsApp's accessibility tree.
         points = self._visual_call_controls()
-        if points and "notification" in sources:
+        if points and ("notification" in sources or "wpndb" in sources):
             accept_point, decline_point = points
             sources.append("vision")
             return IncomingCall(

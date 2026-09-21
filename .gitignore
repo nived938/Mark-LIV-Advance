@@ -20,6 +20,11 @@ test.txt
 # ── Personal data the assistant accumulates about you ─────────────────────────
 memory/long_term.json
 memory/*.db
+memory/learned_rules.json
+memory/self_heal_state.json
+memory/self_heal_backups/
+memory/paired_devices.json
+screenshots/android/
 
 # ── Python build noise ────────────────────────────────────────────────────────
 __pycache__/

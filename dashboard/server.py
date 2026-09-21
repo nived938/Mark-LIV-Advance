@@ -39,6 +39,7 @@ BASE_DIR    = Path(__file__).resolve().parent.parent
 STATIC_DIR  = Path(__file__).parent / "static"
 PORT        = 8000
 MAX_UPLOAD_MB = 500
+DEVICE_FILE = BASE_DIR / "memory" / "paired_devices.json"
 
 
 def _make_uploads_dir() -> Path:
@@ -466,7 +467,7 @@ class DashboardServer:
         self._wake_callback               = None
         self._connect_callback            = None
         self._pending_keys: dict[str, float] = {}
-        self._device_sessions: dict[str, dict] = {}  # device_token → {session_key}
+        self._device_sessions: dict[str, dict] = self._load_device_sessions()  # hashed device_token → metadata
         self._phone_audio_queue: asyncio.Queue    = asyncio.Queue(maxsize=200)
         self._uploads_dir                 = UPLOADS_DIR
         self._login_html                  = _read("login.html")
@@ -510,6 +511,32 @@ class DashboardServer:
             return _decrypt_cbc(self._aes_key(sk), enc_b64)
         except Exception:
             return None
+
+    @staticmethod
+    def _device_id(token: str) -> str:
+        return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _load_device_sessions() -> dict:
+        try:
+            import json
+            data = json.loads(DEVICE_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_device_sessions(self) -> None:
+        try:
+            import json
+            DEVICE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = DEVICE_FILE.with_suffix(".tmp")
+            tmp.write_text(
+                json.dumps(self._device_sessions, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            tmp.replace(DEVICE_FILE)
+        except Exception as exc:
+            print(f"[Dashboard] Pairing persistence failed: {exc}")
 
     # ── callbacks ────────────────────────────────────────────────────────
 
@@ -603,12 +630,18 @@ class DashboardServer:
 </div></body></html>""")
 
             del self._pending_keys[key]
-            tok     = secrets.token_urlsafe(32)
+            tok = secrets.token_urlsafe(32)
             dev_tok = secrets.token_urlsafe(32)
+            device_id = self._device_id(dev_tok)
             self._tokens.add(tok)
             self._token_keys[tok] = key
             self._aes_key(key)
-            self._device_sessions[dev_tok] = {"session_key": key}
+            self._device_sessions[device_id] = {
+                "session_key": key,
+                "created_at": time.time(),
+                "last_seen": time.time(),
+            }
+            self._save_device_sessions()
 
             if self._connect_callback:
                 self._connect_callback()
@@ -641,9 +674,13 @@ class DashboardServer:
             except Exception:
                 return JSONResponse({"ok": False}, status_code=400)
             dev_tok = (body.get("device_token") or "").strip()
-            if not dev_tok or dev_tok not in self._device_sessions:
+            device_id = self._device_id(dev_tok)
+            if not dev_tok or device_id not in self._device_sessions:
                 return JSONResponse({"ok": False}, status_code=401)
-            session_key = self._device_sessions[dev_tok]["session_key"]
+            session = self._device_sessions[device_id]
+            session["last_seen"] = time.time()
+            session_key = session["session_key"]
+            self._save_device_sessions()
             tok = secrets.token_urlsafe(32)
             self._tokens.add(tok)
             self._token_keys[tok] = session_key
@@ -662,7 +699,37 @@ class DashboardServer:
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
             count = len(self._device_sessions)
             self._device_sessions.clear()
+            self._save_device_sessions()
             return JSONResponse({"ok": True, "revoked": count})
+
+        @app.get("/api/pairings")
+        async def pairings(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            items = []
+            for device_id, data in self._device_sessions.items():
+                items.append({
+                    "device_id": device_id[:12],
+                    "created_at": data.get("created_at", 0),
+                    "last_seen": data.get("last_seen", 0),
+                })
+            return JSONResponse({"devices": items})
+
+        @app.post("/api/revoke-device")
+        async def revoke_device(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                body = await req.json()
+            except Exception:
+                body = {}
+            raw = str(body.get("device_token") or "").strip()
+            device_id = self._device_id(raw)
+            existed = device_id in self._device_sessions
+            if existed:
+                del self._device_sessions[device_id]
+                self._save_device_sessions()
+            return JSONResponse({"ok": True, "revoked": existed})
 
         @app.post("/api/command")
         async def command(req: Request):

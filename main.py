@@ -80,6 +80,8 @@ from memory.config_manager     import (
 from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
 from core                      import confirm as confirm_gate
+from core.call_attention      import CallAttentionMonitor
+from core.boot_sentry          import restore_broken_modules
 from core                      import audio_devices
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
@@ -615,11 +617,22 @@ class JarvisLive:
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
         self._whatsapp_incoming_agent = None       # Windows WhatsApp incoming-call monitor
+        self._call_attention_monitor = None         # Generic desktop-call monitor
+        self._call_event_seen: dict[str, float] = {}
 
         self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
         self._tuned_live    = True  # turn-taking / media / thinking knobs; same fallback
 
         _base_dir = Path(__file__).resolve().parent
+
+        # Boot Sentry runs before action discovery. If a previous autonomous
+        # repair left a module syntactically broken, restore its latest backup
+        # before importing the action registry. main.py and ui.py are excluded.
+        try:
+            restore_broken_modules(logger=lambda msg: print(msg))
+        except Exception as e:
+            print(f"[BootSentry] Disabled: {e}")
+
         _inline_names = {t["name"] for t in TOOL_DECLARATIONS}
 
         # File-backed tools: every actions/*.py with a TOOL dict, discovered the
@@ -819,6 +832,11 @@ class JarvisLive:
                 self._whatsapp_incoming_agent.stop()
         except Exception:
             pass
+        try:
+            if self._call_attention_monitor is not None:
+                self._call_attention_monitor.stop()
+        except Exception:
+            pass
         loop = getattr(self, "_loop", None)
         if loop and not loop.is_closed():
             def _cancel_run():
@@ -892,6 +910,76 @@ class JarvisLive:
         url    = self._dashboard.get_url()
         manual = self._dashboard.get_manual_url()
         return url, key, f"{url}/auto-login?key={key}", manual
+
+    def _on_external_call(self, event) -> None:
+        """Turn a generic Windows desktop-call event into the normal JARVIS flow."""
+        try:
+            signature = str(event.signature)
+        except Exception:
+            signature = "|".join(
+                str(getattr(event, key, "") or "")
+                for key in ("app", "title", "caller")
+            ).casefold()
+
+        now = time.monotonic()
+        if now - self._call_event_seen.get(signature, 0.0) < 8.0:
+            return
+        self._call_event_seen[signature] = now
+
+        app = str(getattr(event, "app", "") or "Unknown app")
+        caller = str(getattr(event, "caller", "") or "").strip()
+        source = str(getattr(event, "source", "") or "desktop")
+
+        if app.casefold() == "whatsapp":
+            from types import SimpleNamespace
+            self._on_whatsapp_incoming_call(
+                SimpleNamespace(caller=caller or "someone", app="WhatsApp")
+            )
+            return
+
+        self.ui.write_log(
+            f"SYS: Incoming {app} call"
+            + (f" from {caller}" if caller else "")
+            + f" detected via {source}."
+        )
+        if self._wake_enabled and not self._awake:
+            self.wake(reason=f"{app} incoming call")
+
+        loop = getattr(self, "_loop", None)
+        if not loop or not self.session:
+            return
+
+        async def _announce():
+            try:
+                caller_text = caller or "an unknown caller"
+                await self.session.send_client_content(
+                    turns={
+                        "role": "user",
+                        "parts": [{
+                            "text": (
+                                "[DESKTOP_INCOMING_CALL]\n"
+                                f"A native Windows incoming call is ringing in {app} "
+                                f"from {caller_text}. The call is still pending. "
+                                "Tell the user immediately that the call was detected "
+                                "and ask whether to accept or decline it. Do not "
+                                "accept or decline it yourself. If the user says "
+                                "accept, answer, or pick up, call call_control with "
+                                f"action='accept' and app='{app}'. If the user says "
+                                "decline, reject, ignore, hang up, or cut the call, "
+                                f"call call_control with action='decline' and app='{app}'. "
+                                "Only report success when the tool confirms it."
+                            )
+                        }],
+                    },
+                    turn_complete=True,
+                )
+            except Exception as exc:
+                print(f"[CallAttention] Could not announce incoming call: {exc}")
+
+        try:
+            asyncio.run_coroutine_threadsafe(_announce(), loop)
+        except Exception as exc:
+            print(f"[CallAttention] Announcement scheduling failed: {exc}")
 
     def _on_whatsapp_incoming_call(self, call) -> None:
         """Handle a native WhatsApp incoming call, optionally with auto busy reply."""
@@ -1153,6 +1241,13 @@ class JarvisLive:
         # current operating policy has final precedence over generic defaults.
         parts.append(prompt_context())
         parts.append(workspace_context())
+        try:
+            from core.learned_rules import prompt_context as _learned_rules_prompt
+            _learned = _learned_rules_prompt()
+            if _learned:
+                parts.append(_learned)
+        except Exception:
+            pass
 
         cfg = dict(
             response_modalities=["AUDIO"],
@@ -1265,6 +1360,8 @@ class JarvisLive:
             "file_processor", "image_processor", "ocr_advance",
             "meeting_copilot", "knowledge_vault", "workflow_recorder",
             "event_rules", "hardware_diagnostics", "self_updater",
+            "learning_rules", "self_heal", "smart_desktop", "office_builder",
+            "android_autopilot", "call_control",
             "jarvis_services", "public_api",
         }
 
@@ -1481,6 +1578,13 @@ class JarvisLive:
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
         low_result = str(result or "").lower()
+        if any(marker in low_result for marker in ("failed", "error", "not found")):
+            try:
+                from core.self_heal import ENGINE
+                ENGINE.observe_failure(name, str(result))
+            except Exception:
+                pass
+
         if self._needs_task_terminal(name):
             if "cancel" in low_result:
                 self._log_task_event(f"< {name.upper()} CANCELLED")
@@ -2372,8 +2476,8 @@ class JarvisLive:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
 
-        # Windows WhatsApp incoming-call agent. It watches the native desktop
-        # call dialog in a daemon thread and never uses WhatsApp Web.
+        # Windows WhatsApp incoming-call agent. It watches native WhatsApp
+        # notifications/UIA/visual controls and never uses WhatsApp Web.
         try:
             self._whatsapp_incoming_agent = start_incoming_call_agent(
                 self._on_whatsapp_incoming_call
@@ -2381,6 +2485,20 @@ class JarvisLive:
         except Exception as e:
             print(f"[WhatsAppAgent] Disabled: {e}")
             self._whatsapp_incoming_agent = None
+
+        # Generic desktop call detector: WPNDB first, then visible-window
+        # corroboration. WhatsApp is excluded because its specialized agent has
+        # direct call-control support.
+        try:
+            self._call_attention_monitor = CallAttentionMonitor(
+                on_call=self._on_external_call,
+                interval=1.0,
+                ignored_apps={"whatsapp"},
+            )
+            self._call_attention_monitor.start()
+        except Exception as e:
+            print(f"[CallAttention] Disabled: {e}")
+            self._call_attention_monitor = None
 
         # Resume persisted WHEN/THEN rules after application restart.
         try:
@@ -2611,6 +2729,11 @@ class JarvisLive:
         try:
             if self._whatsapp_incoming_agent is not None:
                 self._whatsapp_incoming_agent.stop()
+        except Exception:
+            pass
+        try:
+            if self._call_attention_monitor is not None:
+                self._call_attention_monitor.stop()
         except Exception:
             pass
         try:
