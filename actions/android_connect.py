@@ -1,7 +1,6 @@
 """Voice controls for the JARVIS Android companion."""
 from __future__ import annotations
 
-import asyncio
 from core.mobile_gateway import GATEWAY
 
 
@@ -68,16 +67,7 @@ def android_connect(parameters=None, **_) -> str:
                 payload = json.loads(payload)
             except Exception:
                 return "payload must be valid JSON."
-        try:
-            result = asyncio.run(GATEWAY.command(device_id, command, payload))
-        except RuntimeError:
-            # The action normally runs in JARVIS's executor thread, but keep
-            # this branch safe if a caller invokes it from a worker with a loop.
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(GATEWAY.command(device_id, command, payload))
-            finally:
-                loop.close()
+        result = GATEWAY.command_sync(device_id, command, payload)
         if isinstance(result, dict):
             return str(result.get("result") or result)
         return str(result)
