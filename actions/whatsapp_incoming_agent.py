@@ -108,24 +108,10 @@ def auto_busy_reply(call) -> tuple[bool, str]:
         caller = agent._best_whatsapp_chat_caller()
     caller = caller or "there"
 
-    # Prepare the virtual call-audio route before accepting. This is what makes
-    # the subsequent speech go to the phone instead of the WhatsApp chat box.
-    try:
-        from actions.whatsapp_advance import _CALL_AUDIO_PREPARE
-        if callable(_CALL_AUDIO_PREPARE):
-            prepared, prepare_error = _CALL_AUDIO_PREPARE()
-            if not prepared:
-                return False, prepare_error
-    except Exception as exc:
-        return False, f"Call audio bridge unavailable: {exc}"
-
+    # Accept the real call first. The JARVIS speech path is optional and
+    # depends on the virtual audio routing configured on the PC.
     ok, error = agent.accept()
     if not ok:
-        try:
-            from core.call_audio import ROUTER
-            ROUTER.stop()
-        except Exception:
-            pass
         return False, f"Could not accept the WhatsApp call from {caller}: {error}"
 
     try:
@@ -135,11 +121,16 @@ def auto_busy_reply(call) -> tuple[bool, str]:
             caller,
             True,
         )
-        return spoken, speech_error
+        if not spoken:
+            try:
+                agent.hang_up()
+            except Exception:
+                pass
+            return False, speech_error
+        return True, speech_error
     except Exception as exc:
         try:
-            from core.call_audio import ROUTER
-            ROUTER.stop()
+            agent.hang_up()
         except Exception:
             pass
         return False, str(exc)
