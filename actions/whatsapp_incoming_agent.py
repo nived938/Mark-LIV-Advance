@@ -844,6 +844,8 @@ class WhatsAppIncomingAgent:
 
         # Detector 3a: UI Automation.
         for window in self._find_whatsapp_windows():
+            if not self._is_native_whatsapp_window(window):
+                continue
             accept, decline = self._find_buttons(window)
             if accept is None or decline is None:
                 continue
