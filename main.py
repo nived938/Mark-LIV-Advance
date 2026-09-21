@@ -622,6 +622,8 @@ class JarvisLive:
         self._call_attention_monitor = None         # Generic desktop-call monitor
         self._call_event_seen: dict[str, float] = {}
         self._call_speech_active = False
+        self._live_quota_until = 0.0
+        self._last_live_error = ""
 
         self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
         self._tuned_live    = True  # turn-taking / media / thinking knobs; same fallback
@@ -2637,6 +2639,13 @@ class JarvisLive:
         while True:
             if self._shutdown_requested:
                 break
+
+            remaining_quota = self._live_quota_until - time.monotonic()
+            if remaining_quota > 0:
+                self.ui.set_state("SLEEPING")
+                await asyncio.sleep(min(60.0, remaining_quota))
+                continue
+
             try:
                 self._ensure_async_executor()
                 print("[JARVIS] Connecting...")
@@ -2765,8 +2774,45 @@ class JarvisLive:
                     continue
 
                 err_str = str(e)
-                print(f"[JARVIS] Error ({type(e).__name__}): {e}")
-                traceback.print_exc()
+                err_low = err_str.casefold()
+
+                if (
+                    "1011" in err_str
+                    and "quota" in err_low
+                    and ("exceed" in err_low or "billing" in err_low)
+                ) or "resource_exhausted" in err_low or "quota_exceeded" in err_low:
+                    self._live_quota_until = time.monotonic() + 900.0
+                    self._conn_backoff = 900
+                    message = (
+                        "NET: Gemini Live quota is exhausted. "
+                        "Reconnects are suspended for 15 minutes instead of retrying every 3 seconds. "
+                        "Check the Gemini project quota or billing status."
+                    )
+                    if message != self._last_live_error:
+                        self.ui.write_log(message)
+                        print(f"[JARVIS] {message}")
+                        self._last_live_error = message
+                    continue
+
+                if "1011" in err_str or "internal error encountered" in err_low:
+                    self._conn_backoff = min(
+                        max(getattr(self, "_conn_backoff", 3) * 2, 6),
+                        60,
+                    )
+                    message = (
+                        f"NET: Gemini Live internal error — retrying in "
+                        f"{self._conn_backoff}s."
+                    )
+                    if message != self._last_live_error:
+                        self.ui.write_log(message)
+                        print(f"[JARVIS] {message}")
+                        self._last_live_error = message
+                    continue
+
+                if err_str != self._last_live_error:
+                    print(f"[JARVIS] Error ({type(e).__name__}): {e}")
+                    traceback.print_exc()
+                    self._last_live_error = err_str[:300]
 
                 # Turn-taking / media / thinking knobs rejected by the server
                 # (preview API drift) — drop them first, because they are the
