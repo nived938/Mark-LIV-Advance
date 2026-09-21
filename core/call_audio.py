@@ -53,31 +53,52 @@ class CallAudioRouter:
         terms = tuple(str(x).casefold() for x in terms)
         matches = []
         for index, dev in enumerate(cls._devices()):
-            name = str(dev.get("name", "")).casefold()
-            channels = dev.get("max_output_channels", 0) if direction == "output" else dev.get("max_input_channels", 0)
-            if channels and any(term in name for term in terms):
-                matches.append((index, str(dev.get("name", ""))))
+            name = str(dev.get("name", ""))
+            low = name.casefold()
+            channels = (
+                dev.get("max_output_channels", 0)
+                if direction == "output"
+                else dev.get("max_input_channels", 0)
+            )
+            if channels and any(term in low for term in terms):
+                matches.append((index, name))
         return matches
 
     @classmethod
+    def _pick(cls, exact_terms, fallback_terms, direction):
+        exact = cls._find(exact_terms, direction)
+        if exact:
+            return exact[0]
+        fallback = cls._find(fallback_terms, direction)
+        return fallback[0] if fallback else None
+
+    @classmethod
     def find_cables(cls):
+        a_in = cls._pick(
+            ("cable-a input", "cable input a"),
+            ("cable input",),
+            "output",
+        )
+        a_out = cls._pick(
+            ("cable-a output", "cable output a"),
+            ("cable output",),
+            "input",
+        )
+        b_out = cls._pick(
+            ("cable-b output", "cable output b", "vb-audio virtual cable b output"),
+            ("cable output b", "vb-audio virtual cable b output"),
+            "input",
+        )
+        b_in = cls._pick(
+            ("cable-b input", "cable input b", "vb-audio virtual cable b input"),
+            ("cable input b", "vb-audio virtual cable b input"),
+            "output",
+        )
         return {
-            "jarvis_to_phone": cls._find(
-                ("cable input a", "cable-a input", "cable input"),
-                "output",
-            ),
-            "phone_mic": cls._find(
-                ("cable output a", "cable-a output", "cable output"),
-                "input",
-            ),
-            "phone_to_jarvis": cls._find(
-                ("cable output b", "cable-b output", "vb-audio virtual cable b output"),
-                "input",
-            ),
-            "phone_speaker": cls._find(
-                ("cable input b", "cable-b input", "vb-audio virtual cable b input"),
-                "output",
-            ),
+            "jarvis_to_phone": [a_in] if a_in else [],
+            "phone_mic": [a_out] if a_out else [],
+            "phone_to_jarvis": [b_out] if b_out else [],
+            "phone_speaker": [b_in] if b_in else [],
         }
 
     @classmethod
