@@ -566,6 +566,24 @@ class WhatsAppIncomingAgent:
             or self._is_whatsapp_process(window)
         )
 
+    def _is_native_whatsapp_window(self, window) -> bool:
+        """Return True only for the installed WhatsApp Windows process.
+
+        A browser tab can have 'WhatsApp' in its title, so title matching alone
+        is unsafe for automation. Caller detection and message sending must never
+        fall through to Chrome/Edge/another browser window.
+        """
+        if psutil is None:
+            return False
+        try:
+            pid = int(window.process_id())
+            proc = psutil.Process(pid)
+            name = str(proc.name() or "").casefold()
+            exe = str(proc.exe() or "").casefold()
+            return "whatsapp" in name or "whatsapp" in Path(exe).name.casefold()
+        except Exception:
+            return False
+
     def _find_buttons(self, window):
         accept = decline = None
         try:
@@ -668,6 +686,8 @@ class WhatsAppIncomingAgent:
         for window in windows:
             if not self._looks_like_whatsapp(window):
                 continue
+            if not self._is_native_whatsapp_window(window):
+                continue
             try:
                 for control in window.descendants():
                     text = self._safe_text(control).strip()
@@ -702,23 +722,67 @@ class WhatsAppIncomingAgent:
         return candidates[0][1]
 
     def _extract_caller(self, window) -> str:
-        texts = []
+        """Extract the caller from the native WhatsApp call dialog.
+
+        The call dialog is a stronger source than a toast notification because
+        its text belongs to the actual call UI. Score candidates instead of
+        taking the first short string, which could be an unrelated label such as
+        'cb' or a navigation item.
+        """
+        candidates = []
+
         try:
             title = self._safe_text(window)
-            if title:
-                texts.append(title)
+            candidate = self._caller_from_text(title)
+            if candidate:
+                candidates.append((candidate, 100))
         except Exception:
             pass
 
         try:
-            for control in window.descendants():
-                text = self._safe_text(control)
-                if text:
-                    texts.append(text)
+            controls = window.descendants()
         except Exception:
-            pass
+            controls = []
 
-        return self._caller_from_text(" | ".join(texts)) or "someone"
+        for control in controls:
+            text = self._safe_text(control)
+            if not text:
+                continue
+            candidate = self._caller_from_text(text)
+            if not candidate:
+                continue
+
+            try:
+                control_type = str(
+                    control.element_info.control_type or ""
+                ).casefold()
+            except Exception:
+                control_type = ""
+
+            score = 0
+            if control_type == "text":
+                score += 20
+            if len(candidate.split()) >= 2:
+                score += 15
+            if len(candidate) >= 4:
+                score += 8
+            if any(ch.isupper() for ch in candidate):
+                score += 4
+            if candidate.casefold() in {"whatsapp", "chats", "calls", "settings"}:
+                score -= 100
+
+            # Tiny tokens are usually technical/UI labels rather than a person's
+            # display name. Keep them only when there is no stronger candidate.
+            if len(candidate.strip()) <= 3:
+                score -= 12
+
+            candidates.append((candidate, score))
+
+        if not candidates:
+            return "someone"
+
+        candidates.sort(key=lambda item: (-item[1], -len(item[0]), item[0].casefold()))
+        return candidates[0][0]
 
     def _caller_from_text(self, raw: str) -> str:
         if not raw:
@@ -786,8 +850,13 @@ class WhatsAppIncomingAgent:
             if not self._looks_like_whatsapp(window):
                 continue
             detected_caller = self._extract_caller(window)
-            if self._norm(detected_caller) not in {"someone", "non client input sink window"}:
-                caller = caller or detected_caller
+            if self._norm(detected_caller) not in {
+                "someone", "non client input sink window"
+            }:
+                # The native call dialog is authoritative when it exposes a
+                # caller name. Override notification/WPNDB guesses such as
+                # 'cb' with the actual WhatsApp display name.
+                caller = detected_caller
             sources.append("uia")
             return IncomingCall(
                 caller=caller or "someone",
