@@ -49,6 +49,52 @@ def _app_title_matches(app_name: str, title: str) -> bool:
     return low in title_low
 
 
+def _focus_visible_modal():
+    """Find and focus a visible modal Windows dialog before the target app."""
+    if Desktop is None:
+        return None
+
+    dialog_title_parts = (
+        "save as", "open", "select folder", "choose", "browse for folder",
+        "confirm", "file upload", "file download", "rename"
+    )
+
+    try:
+        candidates = []
+        for win in Desktop(backend="uia").windows():
+            title = (win.window_text() or "").strip()
+            title_low = title.lower()
+            class_name = (win.class_name() or "").strip().lower()
+
+            if class_name == "#32770" or any(part in title_low for part in dialog_title_parts):
+                try:
+                    if hasattr(win, "is_visible") and not win.is_visible():
+                        continue
+                except Exception:
+                    pass
+                candidates.append((win, title, class_name))
+
+        # Prefer a real #32770 dialog over a normal application window.
+        candidates.sort(key=lambda item: item[2] != "#32770")
+        if candidates:
+            win, title, _ = candidates[0]
+            try:
+                win.restore()
+            except Exception:
+                pass
+            try:
+                win.set_focus()
+            except Exception:
+                pass
+            time.sleep(0.25)
+            print(f"[ComputerUse] Focused visible modal: {title}")
+            return title
+    except Exception as exc:
+        print(f"[ComputerUse] modal scan failed: {exc}")
+
+    return None
+
+
 def _looks_like_system_dialog(window: dict) -> bool:
     """Keep a visible modal/system dialog in front instead of stealing focus back."""
     title = (window.get("title") or "").strip().lower()
@@ -117,7 +163,11 @@ def _infer_target_app(goal: str) -> str:
 
 
 def _ensure_target_focus(target_app: str, active_window: dict) -> str:
-    """Keep the requested app focused unless a visible modal dialog needs the foreground."""
+    """Keep the requested app focused, while allowing visible modal dialogs to stay in front."""
+    modal_title = _focus_visible_modal()
+    if modal_title:
+        return modal_title
+
     if not target_app:
         return ""
 
@@ -199,8 +249,10 @@ RECENT ACTIONS: {recent}
 The attached screenshot is the current desktop. It is the source of truth.
 Inspect the screenshot before deciding. For every mouse click, use the visible screen image
 to identify the exact UI control and return its center pixel coordinates x,y from this screenshot.
-NEVER guess a button location from memory, a typical layout, or an app description.
-Only click a control that is actually visible in the screenshot.
+For typing, also return x,y for the visible text field you intend to type into; JARVIS will focus
+that exact screen location before typing.
+NEVER guess a button or field location from memory, a typical layout, or an app description.
+Only click or type into controls that are actually visible in the screenshot.
 Choose exactly ONE next UI action.
 
 When the target app is visible but not focused, choose focus_window with its visible title.
@@ -271,6 +323,18 @@ def _execute(step):
         # "keys" field. Accept both, and correctly execute sequential chords.
         spec = p.get("keys") or p.get("hotkey")
         return _execute_hotkey(spec)
+
+    # When Gemini gives coordinates for typing, those coordinates are the
+    # field it identified in the screenshot. Focus that exact visible field
+    # before typing instead of accidentally typing into the previously focused
+    # editor or another window.
+    if action in {"type", "smart_type"} and p.get("x") is not None and p.get("y") is not None:
+        if pyautogui is not None:
+            w, h = pyautogui.size()
+            x = max(0, min(int(p.get("x", 0)), w - 1))
+            y = max(0, min(int(p.get("y", 0)), h - 1))
+            pyautogui.click(x, y)
+            time.sleep(0.15)
 
     p["action"] = action
 
