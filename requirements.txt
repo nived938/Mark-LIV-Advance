@@ -57,7 +57,7 @@ tinytuya
 
 # ── Windows-only (pip skips these automatically on macOS / Linux) ─────────────
 comtypes;   sys_platform == "win32"
-pycaw;      sys_platform == "win32"
+pycaw>=20251023,<2026; sys_platform == "win32"
 win10toast; sys_platform == "win32"
 pywinauto;  sys_platform == "win32"
 pywin32;    sys_platform == "win32"
@@ -78,6 +78,9 @@ PyPDF2                       # file_processor — PDF fallback reader
 python-docx                  # file_processor — .docx reading
 paho-mqtt                    # printer_control plugin — MQTT printers
 pynvml                       # system_monitor + the HUD's GPU meter (NVIDIA)
+androidtvremote2>=0.3.2,<0.4     # Android TV / Google TV Remote v2
+zeroconf>=0.147,<1               # local TV/mobile service discovery
+websockets>=15,<17               # JARVIS mobile gateway
 
 # ── Optional: heavy extras, install only if you want the feature ──────────────
 # Left out on purpose — together they are several hundred megabytes, which is a
