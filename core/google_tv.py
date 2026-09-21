@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import time
 from pathlib import Path
 
 
@@ -71,6 +72,56 @@ class GoogleTVManager:
         )
         await remote.async_generate_cert_if_missing()
         return remote
+
+    def discover(self, timeout: float = 3.0) -> str:
+        """Discover Android TV/Google TV endpoints using mDNS."""
+        try:
+            from zeroconf import Zeroconf, ServiceBrowser, ServiceStateChange, ServiceInfo
+        except Exception:
+            return "zeroconf is not installed."
+
+        found = []
+        zc = Zeroconf()
+
+        class Listener:
+            def add_service(self, zc_obj, service_type, name):
+                try:
+                    info = ServiceInfo(service_type, name)
+                    if info.request(zc_obj, 1500):
+                        for addr in info.parsed_addresses():
+                            found.append((name, addr, info.port))
+                            break
+                except Exception:
+                    pass
+
+            def remove_service(self, zc_obj, service_type, name):
+                pass
+
+            def update_service(self, zc_obj, service_type, name):
+                pass
+
+        listener = Listener()
+        browser = ServiceBrowser(zc, "_androidtvremote2._tcp.local.", listener)
+        time.sleep(max(1.0, min(10.0, float(timeout))))
+        try:
+            browser.cancel()
+        except Exception:
+            pass
+        zc.close()
+
+        unique = []
+        seen = set()
+        for name, host, port in found:
+            key = (host, port)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(f"{name} — {host}:{port}")
+        return (
+            "Google TV devices discovered:\n" + "\n".join(unique[:20])
+            if unique else
+            "No Android TV/Google TV Remote Service was discovered."
+        )
 
     def pair_start(self, host):
         host = self._safe_host(host)
