@@ -69,6 +69,14 @@ def _find_whatsapp_window(timeout=12.0):
                     cls = (getattr(win, "class_name", lambda: "")() or "").lower()
                     if "whatsapp" in title or "whatsapp" in cls:
                         return win
+
+                    # After a call ends, the native WhatsApp window can change
+                    # its title/class and expose neither the app name nor the
+                    # chat name through UIA. The process check above is still
+                    # authoritative, so a visible top-level WhatsApp process
+                    # window is also a valid target.
+                    if _is_native_whatsapp_window(win):
+                        return win
                 except Exception:
                     continue
         except Exception:
@@ -369,7 +377,9 @@ def _send_message_desktop(contact, message):
         return False, "WhatsApp opened, but its desktop window was not detected."
 
     # After a WhatsApp call ends, the caller's chat is often already the active
-    # native chat. Use it directly before performing another search.
+    # native chat. Use it directly before performing another search. On builds
+    # that hide the header from UIA, _click_search_and_find below still verifies
+    # the selected native result before typing.
     if _verify_native_chat_target(win, contact):
         ok, error = _type_and_send_message(win, message)
         if not ok:
