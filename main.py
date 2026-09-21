@@ -1323,7 +1323,11 @@ class JarvisLive:
                             bound, bound_detail = CALL_AUDIO.bind_one_way_to_process(
                                 whatsapp_pid
                             )
-                            if not bound:
+                            if bound:
+                                self.ui.write_log(
+                                    f"SYS: {bound_detail}"
+                                )
+                            else:
                                 self.ui.write_log(
                                     f"ERR: WhatsApp per-app microphone routing failed — {bound_detail}"
                                 )
