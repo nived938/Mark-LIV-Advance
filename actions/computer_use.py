@@ -318,7 +318,7 @@ def _is_filename_text(text: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9_. -]+\.[A-Za-z0-9]{1,8}", value))
 
 
-def _execute(step):
+def _execute(step, goal=""):
     action = str(step.get("action","")).lower().strip()
     if action == "key":
         action = "press"
@@ -342,7 +342,7 @@ def _execute(step):
         else:
             normalized = str(spec or "").strip().lower().replace(" ", "")
         active_title = _window().get("title", "").lower()
-        step_goal = json.dumps(step, ensure_ascii=False).lower()
+        step_goal = str(goal or "").lower()
         if (
             normalized == "ctrl+s"
             and "untitled" in active_title
@@ -502,7 +502,7 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
             })
             continue
 
-        result=_execute(decision)
+        result=_execute(decision, goal)
         history.append({
             "step":str(n),
             "action":action,
