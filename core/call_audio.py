@@ -191,12 +191,14 @@ class CallAudioRouter:
 
     @classmethod
     def _find_one_way_loopback(cls):
-        """Find a one-way Windows audio route for sending TTS into a call.
+        """Find the most reliable one-way route for sending TTS into a call.
 
-        Two families are supported:
-        - Hardware/software loopback inputs such as Stereo Mix.
-        - A normal two-endpoint VB-CABLE, where we render into "CABLE Input"
-          and select "CABLE Output" as the call microphone.
+        Prefer the normal two-channel VB-CABLE endpoints over the 16-channel
+        compatibility endpoints that some Windows host APIs expose first.
+        WhatsApp and PortAudio are much more predictable with the standard
+        stereo pair:
+            CABLE Input  -> render
+            CABLE Output -> capture
         """
         if os.name != "nt" or sd is None:
             return None
@@ -208,43 +210,89 @@ class CallAudioRouter:
         for index, dev in enumerate(devices):
             name = str(dev.get("name", "")).strip()
             low = name.casefold()
+            hostapi = int(dev.get("hostapi", -1) or -1)
             if dev.get("max_input_channels", 0):
-                captures.append((index, name, low))
+                captures.append({
+                    "index": index,
+                    "name": name,
+                    "low": low,
+                    "channels": int(dev.get("max_input_channels", 0) or 0),
+                    "hostapi": hostapi,
+                })
             if dev.get("max_output_channels", 0):
-                renders.append((index, name, low))
+                renders.append({
+                    "index": index,
+                    "name": name,
+                    "low": low,
+                    "channels": int(dev.get("max_output_channels", 0) or 0),
+                    "hostapi": hostapi,
+                })
 
-        # Standard VB-CABLE / equivalent virtual cable.
-        cable_capture_terms = (
-            "cable output",
-            "vb-audio virtual cable b output",
-            "vb-audio point output",
-        )
+        def _pair_score(capture, render):
+            score = 0
+            # Prefer the standard stereo endpoints over 16-channel variants.
+            if capture["channels"] == 2:
+                score += 1000
+            elif capture["channels"] <= 8:
+                score += 200
+            if render["channels"] == 2:
+                score += 1000
+            elif render["channels"] <= 8:
+                score += 200
+
+            # Keep both endpoints on the same PortAudio host API where possible.
+            if capture["hostapi"] == render["hostapi"]:
+                score += 250
+
+            # Exact standard VB-CABLE names beat generic virtual-audio matches.
+            if "cable output (vb-audio virtual cable)" in capture["low"]:
+                score += 150
+            elif "cable output" in capture["low"]:
+                score += 80
+            if "cable input (vb-audio virtual cable)" in render["low"]:
+                score += 150
+            elif "cable input" in render["low"]:
+                score += 80
+            return score
+
+        cable_candidates = []
         for capture in captures:
-            if not any(term in capture[2] for term in cable_capture_terms):
+            if not (
+                "cable output" in capture["low"]
+                or "virtual cable b output" in capture["low"]
+                or "point output" in capture["low"]
+            ):
                 continue
 
-            paired_render = None
-            if "cable output" in capture[2]:
-                for render in renders:
-                    if "cable input" in render[2]:
-                        paired_render = render[:2]
-                        break
-            elif "virtual cable b output" in capture[2]:
-                for render in renders:
-                    if "virtual cable b input" in render[2]:
-                        paired_render = render[:2]
-                        break
-            elif "point output" in capture[2]:
-                for render in renders:
-                    if "point input" in render[2]:
-                        paired_render = render[:2]
-                        break
+            for render in renders:
+                valid_pair = False
+                if "cable output" in capture["low"]:
+                    valid_pair = "cable input" in render["low"]
+                elif "virtual cable b output" in capture["low"]:
+                    valid_pair = "virtual cable b input" in render["low"]
+                elif "point output" in capture["low"]:
+                    valid_pair = "point input" in render["low"]
 
-            if paired_render:
-                return {
-                    "capture": capture[:2],
-                    "render": paired_render,
-                }
+                if valid_pair:
+                    cable_candidates.append(
+                        (_pair_score(capture, render), capture, render)
+                    )
+
+        if cable_candidates:
+            cable_candidates.sort(
+                key=lambda item: (
+                    -item[0],
+                    item[1]["channels"],
+                    item[2]["channels"],
+                    item[1]["index"],
+                    item[2]["index"],
+                )
+            )
+            _score, capture, render = cable_candidates[0]
+            return {
+                "capture": (capture["index"], capture["name"]),
+                "render": (render["index"], render["name"]),
+            }
 
         # Hardware loopback devices. The normal Windows output device is fine
         # for these because the loopback device captures the speaker mix.
@@ -255,12 +303,24 @@ class CallAudioRouter:
             "loopback",
             "speaker output",
         )
-        for capture in captures:
-            if any(term in capture[2] for term in loopback_terms):
-                return {
-                    "capture": capture[:2],
-                    "render": None,
-                }
+        loopbacks = [
+            capture
+            for capture in captures
+            if any(term in capture["low"] for term in loopback_terms)
+        ]
+        if loopbacks:
+            loopbacks.sort(
+                key=lambda item: (
+                    0 if item["channels"] == 2 else 1,
+                    item["channels"],
+                    item["index"],
+                )
+            )
+            capture = loopbacks[0]
+            return {
+                "capture": (capture["index"], capture["name"]),
+                "render": None,
+            }
 
         return None
 
