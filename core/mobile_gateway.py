@@ -158,6 +158,13 @@ class MobileGateway:
         if self._server is not None:
             return
         try:
+            from dashboard.server import _ensure_network_access
+            await asyncio.get_running_loop().run_in_executor(
+                None, _ensure_network_access, PORT
+            )
+        except Exception:
+            pass
+        try:
             import websockets
         except ImportError:
             print("[MobileGateway] websockets is not installed.")
@@ -205,7 +212,7 @@ class MobileGateway:
             print(f"[MobileGateway] mDNS discovery unavailable: {exc}")
 
     async def stop(self):
-        if self._zeroconf is not None and getattr(self, "_service_info", None):
+        if getattr(self, "_zeroconf", None) is not None and getattr(self, "_service_info", None):
             try:
                 self._zeroconf.unregister_service(self._service_info)
                 self._zeroconf.close()
