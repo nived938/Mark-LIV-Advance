@@ -1372,6 +1372,24 @@ class JarvisLive:
         # current operating policy has final precedence over generic defaults.
         parts.append(prompt_context())
         parts.append(workspace_context())
+
+        parts.append(
+            "[CALL AUTOMATION POLICY]\n"
+            "For an incoming call, use the dedicated call tools, not computer_use. "
+            "If the user says accept/answer and also says 'tell them', 'say', 'I am busy', "
+            "or gives a message, call whatsapp_advance with action='accept_incoming', "
+            "speak=true, and put the exact spoken sentence in message. NEVER type that "
+            "sentence into the WhatsApp chat composer when the user asked to speak to "
+            "the caller. For 'call PERSON', use whatsapp_advance action='call' and let "
+            "its default introduction play unless the user explicitly says not to speak; "
+            "then pass speak=false. During an automated call introduction, 'stop' means "
+            "stop JARVIS call speech so the user can talk directly. For 'if anyone calls "
+            "me for the next N minutes...', use call_rules with action='busy' or 'accept'; "
+            "these rules are temporary and local. Use call_rules history when the user "
+            "asks who called. For Bluetooth, use system_settings, never open Teams or "
+            "guess by screen coordinates. For 'put Chrome on the other screen', use "
+            "window_manager."
+        )
         try:
             from core.learned_rules import prompt_context as _learned_rules_prompt
             _learned = _learned_rules_prompt()
