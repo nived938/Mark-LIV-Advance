@@ -232,6 +232,46 @@ def _type_and_send_message(win, message):
         return False, str(e)
 
 
+def _verify_native_chat_target(win, contact: str) -> bool:
+    """Verify the native WhatsApp chat actually shows the requested contact."""
+    target = " ".join(str(contact or "").casefold().split()).strip()
+    if not target:
+        return False
+
+    try:
+        controls = win.descendants()
+    except Exception:
+        controls = []
+
+    candidates = []
+    try:
+        title = (win.window_text() or "").strip()
+        if title:
+            candidates.append(title)
+    except Exception:
+        pass
+
+    for control in controls:
+        try:
+            control_type = str(
+                control.element_info.control_type or ""
+            ).casefold()
+            if control_type not in {"text", "button", "listitem"}:
+                continue
+            text = (control.window_text() or "").strip()
+            if text:
+                candidates.append(text)
+        except Exception:
+            continue
+
+    for value in candidates:
+        normalized = " ".join(value.casefold().split()).strip()
+        if normalized == target:
+            return True
+
+    return False
+
+
 def _send_message_desktop(contact, message):
     if not pyautogui:
         return False, "pyautogui is not installed."
@@ -249,6 +289,13 @@ def _send_message_desktop(contact, message):
     win = _focus_whatsapp(5)
     if not win:
         return False, "WhatsApp chat opened, but its window disappeared."
+
+    if not _verify_native_chat_target(win, contact):
+        return (
+            False,
+            f"Could not verify the native WhatsApp chat for '{contact}'. "
+            "No message was typed or sent."
+        )
 
     ok, error = _type_and_send_message(win, message)
     if not ok:
