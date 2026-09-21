@@ -447,9 +447,15 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
         pending = agent.pending
         caller = pending.caller if pending else (contact or "the caller")
 
+        # Prepare one-way Windows speech before accepting the call so WhatsApp
+        # can inherit Stereo Mix/loopback as its communications microphone.
+        try:
+            from core.call_audio import ROUTER
+            ROUTER.begin_one_way()
+        except Exception:
+            pass
+
         # Accept the real call first. JARVIS call speech is an optional second step.
-        # A missing virtual audio bridge must never prevent the actual WhatsApp
-        # call from being answered.
         ok, error = agent.accept()
         if not ok:
             return f"Could not accept the incoming WhatsApp call from {caller}: {error}"
