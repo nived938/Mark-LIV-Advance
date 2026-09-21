@@ -361,7 +361,7 @@ def _verify_native_chat_target(win, contact: str) -> bool:
         if score > best_score:
             best_score = score
 
-    # A short caller name such as "Malu" is allowed to match the actual
+    # A short contact name such as "Malu" is allowed to match the actual
     # WhatsApp display name "Malu Chechi", but an unrelated chat is not.
     return best_score >= 70
 
