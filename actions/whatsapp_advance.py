@@ -280,6 +280,22 @@ def _click_call_button(kind):
 def whatsapp_advance(action, contact="", phone="", message="", confirmation=""):
     action = (action or "").lower().strip()
 
+    if action in ("enable_busy_reply", "busy_mode_on", "auto_busy_on"):
+        from actions.whatsapp_incoming_agent import set_busy_mode
+        return set_busy_mode(True, message)
+
+    if action in ("disable_busy_reply", "busy_mode_off", "auto_busy_off"):
+        from actions.whatsapp_incoming_agent import set_busy_mode
+        return set_busy_mode(False)
+
+    if action in ("busy_status", "busy_mode_status"):
+        from actions.whatsapp_incoming_agent import get_busy_mode
+        enabled, busy_message = get_busy_mode()
+        return (
+            f"Automatic WhatsApp busy reply is {'enabled' if enabled else 'disabled'}. "
+            f"Message: {busy_message}"
+        )
+
     # Incoming-call controls are backed by the Windows WhatsApp native call
     # dialog. The detector keeps the pending caller in memory until the user
     # answers JARVIS. Never use WhatsApp Web for these actions.
@@ -389,14 +405,13 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation=""):
 TOOL = {
     "name": "whatsapp_advance",
     "description": (
-        "WINDOWS WHATSAPP DESKTOP ONLY. This is the default WhatsApp tool for untagged commands "
-        "about WhatsApp on this PC. Use it for 'message achan in whatsapp', 'call achan in "
-        "whatsapp', and similar commands unless the user explicitly says @phone/Android phone. "
-        "Never use phone_advance for those normal PC WhatsApp commands. Never use WhatsApp Web. "
-        "For messages, find the contact, open the chat, focus the actual message composer, "
-        "paste the message, and press Enter automatically. Do not ask for confirmation. "
-        "Do not report success unless the message input was focused and Enter was pressed. "
-        "Calls and video calls should use Windows UI Automation automatically. Incoming calls are detected in the native Windows WhatsApp call dialog; accept_incoming and decline_incoming control the pending call. For decline_incoming, include message for a follow-up text. For accept_incoming, include message to send after answering. call_and_message sends the requested text and then starts the voice call because the native call window can take focus."
+        "WINDOWS WHATSAPP DESKTOP ONLY. Default tool for WhatsApp on this PC. "
+        "Use it for messaging, voice/video calls, incoming-call controls, and automatic busy-reply settings. "
+        "Never use WhatsApp Web. Incoming calls are detected in the native Windows WhatsApp call dialog. "
+        "enable_busy_reply enables persistent automatic handling: decline every incoming WhatsApp call and "
+        "send the configured busy message to the caller; optional message sets the message. "
+        "disable_busy_reply turns the setting off; busy_status reports it. "
+        "For direct call/message actions, do not ask for confirmation."
     ),
     "parameters": {
         "type": "OBJECT",
