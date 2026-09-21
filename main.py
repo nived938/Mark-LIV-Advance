@@ -1285,13 +1285,22 @@ class JarvisLive:
                         from actions.whatsapp_incoming_agent import get_incoming_agent
                         agent = get_incoming_agent()
 
-                        # Prepare call speech BEFORE accepting so Windows/WhatsApp
-                        # can use the selected communications microphone from the
-                        # start of the call. Keep the result so a failed audio route
-                        # immediately falls through to the native chat fallback.
+                        # Prepare call speech BEFORE accepting so WhatsApp can
+                        # inherit the virtual microphone from the start of the call.
                         route_ok, _route_kind, route_detail = (
                             self._prepare_call_speech_route("WhatsApp")
                         )
+
+                        # Capture the native WhatsApp PID before accept() clears the
+                        # pending call. We bind that exact process after acceptance
+                        # because its audio-recording session may not exist earlier.
+                        call_window = getattr(agent.pending, "window", None)
+                        whatsapp_pid = None
+                        try:
+                            if call_window is not None:
+                                whatsapp_pid = int(call_window.process_id())
+                        except Exception:
+                            whatsapp_pid = None
 
                         accepted, accept_error = agent.accept()
                         if not accepted:
@@ -1309,6 +1318,15 @@ class JarvisLive:
                                 f"ERR: WhatsApp temporary busy rule failed — {accept_error}"
                             )
                             return
+
+                        if accepted and CALL_AUDIO.one_way_active and whatsapp_pid:
+                            bound, bound_detail = CALL_AUDIO.bind_one_way_to_process(
+                                whatsapp_pid
+                            )
+                            if not bound:
+                                self.ui.write_log(
+                                    f"ERR: WhatsApp per-app microphone routing failed — {bound_detail}"
+                                )
 
                         if route_ok or CALL_AUDIO.active or CALL_AUDIO.one_way_active:
                             spoken, speech_error = self._speak_to_active_call(
