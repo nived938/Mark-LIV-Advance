@@ -264,6 +264,8 @@ After any action that changes the UI, expect the next step to use a fresh screen
 Prefer normal click/double_click/right_click with screenshot-derived x,y coordinates.
 Use screen_click only when a natural-language element description is safer than coordinates.
 Prefer keyboard shortcuts only when the shortcut is clearly appropriate to the visible app state.
+For an Untitled VS Code editor when the goal is to create/save a named file, use Ctrl+Shift+S
+for Save As, then stop and inspect the fresh screenshot. Do not type the filename into the editor.
 Do not use terminal commands, filesystem APIs, or guessed UI coordinates as a substitute for GUI interaction.
 Do not claim success without visual verification.
 Do not repeat the exact same action and parameters when the screenshot did not visibly change.
@@ -302,6 +304,20 @@ Return ONLY JSON:
         return bool(data and data.get("verified")), str(data.get("evidence","")) if data else "No verification response."
     except Exception as exc: return False, f"verification failed: {exc}"
 
+def _is_file_creation_goal(goal: str) -> bool:
+    text = goal.lower()
+    return bool(
+        re.search(r"\bcreate\s+(?:a\s+)?file\b", text)
+        or re.search(r"\bfile\s+called\b", text)
+        or re.search(r"\bmake\s+(?:a\s+)?file\b", text)
+    )
+
+
+def _is_filename_text(text: str) -> bool:
+    value = str(text or "").strip()
+    return bool(re.fullmatch(r"[A-Za-z0-9_. -]+\.[A-Za-z0-9]{1,8}", value))
+
+
 def _execute(step):
     action = str(step.get("action","")).lower().strip()
     if action == "key":
@@ -319,9 +335,21 @@ def _execute(step):
             p[key] = step[key]
 
     if action == "hotkey":
-        # The model historically returned "hotkey" instead of the declared
-        # "keys" field. Accept both, and correctly execute sequential chords.
+        # For an untitled VS Code document, use the explicit Save As shortcut.
         spec = p.get("keys") or p.get("hotkey")
+        if isinstance(spec, (list, tuple)):
+            normalized = "+".join(str(x).strip().lower() for x in spec)
+        else:
+            normalized = str(spec or "").strip().lower().replace(" ", "")
+        active_title = _window().get("title", "").lower()
+        step_goal = json.dumps(step, ensure_ascii=False).lower()
+        if (
+            normalized == "ctrl+s"
+            and "untitled" in active_title
+            and ("create a file" in step_goal or "file called" in step_goal)
+        ):
+            spec = "ctrl+shift+s"
+            print("[ComputerUse] Untitled file + save request: using explicit Ctrl+Shift+S.")
         return _execute_hotkey(spec)
 
     # When Gemini gives coordinates for typing, those coordinates are the
@@ -329,6 +357,20 @@ def _execute(step):
     # before typing instead of accidentally typing into the previously focused
     # editor or another window.
     if action in {"type", "smart_type"} and p.get("x") is not None and p.get("y") is not None:
+        # Never type a filename into an Untitled VS Code editor during a file
+        # creation task. Gemini must first observe the actual Save As dialog.
+        active_title = _window().get("title", "")
+        typed_text = p.get("text", "")
+        if (
+            "untitled" in active_title.lower()
+            and _is_file_creation_goal(goal)
+            and _is_filename_text(typed_text)
+        ):
+            return (
+                "Blocked filename typing into an Untitled editor. "
+                "The Save As filename field must be visible first; re-observe the screen."
+            )
+
         if pyautogui is not None:
             w, h = pyautogui.size()
             x = max(0, min(int(p.get("x", 0)), w - 1))
@@ -348,7 +390,7 @@ def _execute(step):
 def computer_use(parameters=None, response=None, player=None, session_memory=None):
     params = parameters or {}; goal = str(params.get("goal","")).strip()
     if not goal: return "computer_use requires a goal."
-    max_steps = max(1,min(int(params.get("max_steps",12)),30)); verify_every = max(1,min(int(params.get("verify_every",2)),5))
+    max_steps = max(1,min(int(params.get("max_steps",20)),30)); verify_every = max(1,min(int(params.get("verify_every",2)),5))
     history=[]; print(f"[ComputerUse] ▶ {goal}")
     if player: player.write_log(f"[ComputerUse] {goal}")
 
@@ -485,6 +527,6 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
 TOOL = {
     "name":"computer_use",
     "description":"PRIMARY TOOL FOR MULTI-STEP DESKTOP TASKS. Use this tool whenever the user asks JARVIS to operate an application or the Windows GUI across multiple steps: open/launch an app AND then click, type, create, edit, navigate, save, configure, or verify something in it. Examples: 'Open VS Code and create main.py', 'open Blender and make...', 'open WhatsApp and send...', 'open Settings and change...'. Pass the COMPLETE user goal unchanged in goal. The agent MUST capture the real screen and send that screenshot to Gemini before each decision. Gemini must choose UI actions from visible controls and derive click coordinates from the current screenshot, not guessed button positions. The agent automatically brings the target app to the foreground before each screenshot and re-observes after actions; visible modal dialogs are allowed to remain in front. Do NOT split such tasks between open_app, file_controller, terminal_advance, or computer_control. Do not substitute terminal commands, filesystem APIs, or guessed coordinates for GUI interaction.",
-    "parameters":{"type":"OBJECT","properties":{"goal":{"type":"STRING","description":"Complete user goal to accomplish through the desktop UI."},"target_app":{"type":"STRING","description":"Optional exact app name to keep focused during the GUI task. If omitted, JARVIS infers it from the goal."},"max_steps":{"type":"INTEGER","description":"Maximum UI actions, default 12, maximum 30."},"verify_every":{"type":"INTEGER","description":"Verify progress every N actions, default 2."}},"required":["goal"]},
+    "parameters":{"type":"OBJECT","properties":{"goal":{"type":"STRING","description":"Complete user goal to accomplish through the desktop UI."},"target_app":{"type":"STRING","description":"Optional exact app name to keep focused during the GUI task. If omitted, JARVIS infers it from the goal."},"max_steps":{"type":"INTEGER","description":"Maximum UI actions, default 20, maximum 30."},"verify_every":{"type":"INTEGER","description":"Verify progress every N actions, default 2."}},"required":["goal"]},
     "handler":computer_use,
 }
