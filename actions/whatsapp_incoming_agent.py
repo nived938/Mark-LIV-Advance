@@ -145,7 +145,11 @@ def auto_busy_reply(call) -> tuple[bool, str]:
         if whatsapp_pid:
             try:
                 from core.call_audio import ROUTER
-                ROUTER.bind_one_way_to_process(whatsapp_pid)
+                bound, _detail = ROUTER.bind_one_way_to_process(whatsapp_pid)
+                if not bound:
+                    # Voice remains best-effort here; the caller still gets the
+                    # normal chat fallback if TTS cannot reach the WhatsApp mic.
+                    pass
             except Exception:
                 pass
 
