@@ -334,18 +334,39 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
             return f"Could not accept the incoming WhatsApp call from {caller}: {error}"
 
         if message and bool(speak):
-            spoken, speech_error = _speak_to_active_call(message, caller, bool(end_after))
-            if not spoken:
-                if end_after:
-                    try:
-                        agent.hang_up()
-                    except Exception:
-                        pass
+            spoken, speech_error = _speak_to_active_call(
+                message,
+                caller,
+                bool(end_after),
+            )
+            if spoken:
+                return f"Accepted the WhatsApp call from {caller} and spoke the message."
+
+            # Voice injection requires the optional virtual call-audio bridge.
+            # Fall back to a normal WhatsApp message so the requested
+            # notification is still delivered without pretending speech worked.
+            try:
+                agent.hang_up()
+            except Exception:
+                pass
+
+            sent, send_error = False, ""
+            try:
+                sent, send_error = _send_message_desktop(caller, message)
+            except Exception as exc:
+                send_error = str(exc)
+
+            if sent:
                 return (
-                    f"Accepted the WhatsApp call from {caller}, but could not speak to "
-                    f"the caller: {speech_error}"
+                    f"Accepted the WhatsApp call from {caller}, but JARVIS voice "
+                    f"audio was unavailable; ended the call and sent the message in WhatsApp."
                 )
-            return f"Accepted the WhatsApp call from {caller} and spoke the message."
+
+            return (
+                f"Accepted the WhatsApp call from {caller}, but could not speak "
+                f"the message ({speech_error}) or send the WhatsApp fallback "
+                f"message ({send_error})."
+            )
         return f"Accepted the WhatsApp call from {caller}."
 
     if action in ("hang_up", "end_call", "disconnect_call"):
