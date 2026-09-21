@@ -982,25 +982,58 @@ class JarvisLive:
         except Exception:
             pass
 
+    def _prepare_call_speech_route(self, app: str = "WhatsApp"):
+        """Prepare the best available call-speech route before accepting a call."""
+        loop = getattr(self, "_loop", None)
+
+        # Full two-way cable bridge first.
+        if loop is not None:
+            ok, detail = CALL_AUDIO.begin(loop, self._enqueue_caller_audio)
+            if ok:
+                return True, "two-way", detail
+
+        # WhatsApp only needs one-way speech for an automatic busy message.
+        # Use Stereo Mix/loopback when Windows exposes it. This route must be
+        # prepared BEFORE WhatsApp accepts the call so the communications mic
+        # is selected when the call starts.
+        if str(app).casefold() == "whatsapp" and not CALL_AUDIO.one_way_active:
+            ok_one, detail_one = CALL_AUDIO.begin_one_way()
+            if ok_one:
+                return True, "one-way", detail_one
+
+        if loop is None:
+            return False, "none", "JARVIS audio loop is not ready."
+        return False, "none", CALL_AUDIO.status()
+
     def _speak_to_active_call(self, message: str, caller: str = "", end_after: bool = False, app: str = "WhatsApp"):
         message = str(message or "").strip()
         if not message:
             return False, "No call message was provided."
-        loop = getattr(self, "_loop", None)
-        if loop is None:
-            return False, "JARVIS audio loop is not ready."
 
-        ok, detail = CALL_AUDIO.begin(loop, self._enqueue_caller_audio)
-        if not ok:
+        route = "none"
+        detail = ""
+
+        if CALL_AUDIO.active:
+            route = "two-way"
+        elif CALL_AUDIO.one_way_active:
+            route = "one-way"
+        else:
+            ok, route, detail = self._prepare_call_speech_route(app)
+
+        if route == "none":
             self.ui.write_log(f"ERR: Call audio bridge unavailable — {detail}")
             return False, detail
 
         self._call_speech_active = True
         self.ui.write_log(
-            f"SYS: Speaking to {caller or 'caller'} through the active call."
+            f"SYS: Speaking to {caller or 'caller'} through the active call "
+            f"({route} audio route)."
         )
         try:
-            spoken, error = CALL_AUDIO.speak_to_phone(message)
+            if route == "one-way":
+                spoken, error = CALL_AUDIO.speak_one_way(message)
+            else:
+                spoken, error = CALL_AUDIO.speak_to_phone(message)
         finally:
             self._call_speech_active = False
 
@@ -1240,6 +1273,12 @@ class JarvisLive:
                     try:
                         from actions.whatsapp_incoming_agent import get_incoming_agent
                         agent = get_incoming_agent()
+
+                        # Prepare call speech BEFORE accepting so Windows/WhatsApp
+                        # can use the selected communications microphone from the
+                        # start of the call.
+                        self._prepare_call_speech_route("WhatsApp")
+
                         accepted, accept_error = agent.accept()
                         if not accepted:
                             record_call(
