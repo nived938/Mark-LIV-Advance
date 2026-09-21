@@ -469,6 +469,8 @@ class DashboardServer:
         self._pending_keys: dict[str, float] = {}
         self._device_sessions: dict[str, dict] = self._load_device_sessions()  # hashed device_token → metadata
         self._phone_audio_queue: asyncio.Queue    = asyncio.Queue(maxsize=200)
+        self._uvicorn_server = None
+        self._alias_server = None
         self._uploads_dir                 = UPLOADS_DIR
         self._login_html                  = _read("login.html")
         self._app_html                    = _read("app.html")
@@ -918,7 +920,20 @@ class DashboardServer:
             ssl_keyfile=str(ssl_key), ssl_certfile=str(ssl_cert),
         )
         print(f"[Dashboard] Manual entry:  {self._ip}:{PORT + 1}  (type in browser, accept cert once)")
-        await uvicorn.Server(cfg).serve()
+        self._alias_server = uvicorn.Server(cfg)
+        try:
+            await self._alias_server.serve()
+        finally:
+            self._alias_server = None
+
+    def stop(self) -> None:
+        """Request clean Uvicorn shutdown without cancelling its task."""
+        for server in (self._uvicorn_server, self._alias_server):
+            try:
+                if server is not None:
+                    server.should_exit = True
+            except Exception:
+                pass
 
     async def serve(self) -> None:
         if not _DEPS_OK:
@@ -948,4 +963,8 @@ class DashboardServer:
         proto = "https" if use_ssl else "http"
         print(f"[Dashboard] {proto}://{self._ip}:{PORT}")
         print("[Dashboard] Press 'Remote Control' in JARVIS UI to get the QR code.")
-        await uvicorn.Server(cfg).serve()
+        self._uvicorn_server = uvicorn.Server(cfg)
+        try:
+            await self._uvicorn_server.serve()
+        finally:
+            self._uvicorn_server = None
