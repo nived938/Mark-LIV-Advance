@@ -593,6 +593,13 @@ class JarvisLive:
         # guessed; see _play_audio.
         self._out_latency          = 0.20    # seconds, replaced with the real value
         self._tail_until           = 0.0     # monotonic time the echo tail expires
+        # Client-side VAD state. Server VAD remains enabled; this only sends
+        # audio_stream_end after a clearly completed local utterance so a
+        # sentence is not left waiting on a slow/missed server silence decision.
+        self._local_vad_seen_speech = False
+        self._local_vad_last_voice  = 0.0
+        self._local_vad_end_pending = False
+        self._local_vad_noise       = 0.0
         # Wall-clock time at which the audio written next will begin to sound.
         # The mouth is scheduled against this, never against "now": batches are
         # handed to the device far faster than they play, so "now" ran the lips
@@ -1213,7 +1220,9 @@ class JarvisLive:
                                 f"action='accept' and app='{app}'. If the user says "
                                 "decline, reject, ignore, hang up, or cut the call, "
                                 f"call call_control with action='decline' and app='{app}'. "
-                                "Only report success when the tool confirms it."
+                                "Only report success when the tool confirms it. "
+            "When the user clearly addresses you with a direct request, "
+            "treat it as addressed and respond; do not intentionally stay silent."
                             )
                         }],
                     },
@@ -2079,6 +2088,44 @@ class JarvisLive:
             **_extra
         )
 
+    async def _send_audio_stream_end(self, last_voice: float):
+        """Finalize one locally detected utterance without disabling server VAD."""
+        if not self.session:
+            self._local_vad_end_pending = False
+            return
+        # A new voice block may have arrived while the coroutine was queued.
+        if self._local_vad_last_voice != last_voice:
+            self._local_vad_end_pending = False
+            return
+        try:
+            await self.session.send_realtime_input(audio_stream_end=True)
+        except Exception as exc:
+            # Server VAD remains the fallback if the explicit end signal fails.
+            print(f"[Audio] Client VAD end signal failed: {exc}")
+        finally:
+            if self._local_vad_last_voice == last_voice:
+                self._local_vad_seen_speech = False
+            self._local_vad_end_pending = False
+
+    def _schedule_local_vad_end(self, loop):
+        """Schedule a delayed end signal after ~400 ms of microphone silence."""
+        if (
+            not self._local_vad_seen_speech
+            or self._local_vad_end_pending
+            or not self.session
+        ):
+            return
+        last_voice = self._local_vad_last_voice
+        self._local_vad_end_pending = True
+
+        def _queue():
+            try:
+                asyncio.create_task(self._send_audio_stream_end(last_voice))
+            except Exception:
+                self._local_vad_end_pending = False
+
+        loop.call_soon_threadsafe(_queue)
+
     async def _send_realtime(self):
         while True:
             msg = await self.out_queue.get()
@@ -2162,8 +2209,36 @@ class JarvisLive:
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
+                    {"data": data, "mime_type": "audio/pcm;rate=16000"}
                 )
+
+                # Hybrid VAD: keep the server's speech-start detection, but
+                # finalize an utterance locally after a stable silence gap.
+                try:
+                    samples = np.asarray(indata, dtype=np.float32).reshape(-1)
+                    rms = float(np.sqrt(np.mean(samples * samples))) if samples.size else 0.0
+                    if not self._local_vad_seen_speech:
+                        if self._local_vad_noise <= 0.0:
+                            self._local_vad_noise = rms
+                        else:
+                            self._local_vad_noise = (
+                                self._local_vad_noise * 0.98 + rms * 0.02
+                            )
+                    speech_threshold = max(180.0, self._local_vad_noise * 3.0)
+                    now_vad = time.monotonic()
+
+                    if rms >= speech_threshold:
+                        self._local_vad_seen_speech = True
+                        self._local_vad_last_voice = now_vad
+                        self._local_vad_end_pending = False
+                    elif (
+                        self._local_vad_seen_speech
+                        and not self._local_vad_end_pending
+                        and now_vad - self._local_vad_last_voice >= 0.40
+                    ):
+                        self._schedule_local_vad_end(loop)
+                except Exception:
+                    pass
                 # Feed the live mic level to the HUD so the waveform reacts to
                 # the user's actual voice while listening. Purely cosmetic — any
                 # failure here must never disturb the mic.
@@ -3021,6 +3096,10 @@ class JarvisLive:
                     self.session          = session
                     self.audio_in_queue   = asyncio.Queue()
                     self.out_queue        = asyncio.Queue(maxsize=200)
+                    self._local_vad_seen_speech = False
+                    self._local_vad_last_voice  = 0.0
+                    self._local_vad_end_pending = False
+                    self._local_vad_noise       = 0.0
                     self._turn_done_event = asyncio.Event()
 
                     # Reset transient state that must not carry over from a previous session
