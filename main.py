@@ -81,6 +81,7 @@ from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
 from core                      import confirm as confirm_gate
 from core.call_attention      import CallAttentionMonitor
+from core.boot_sentry          import restore_broken_modules
 from core                      import audio_devices
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
@@ -623,6 +624,15 @@ class JarvisLive:
         self._tuned_live    = True  # turn-taking / media / thinking knobs; same fallback
 
         _base_dir = Path(__file__).resolve().parent
+
+        # Boot Sentry runs before action discovery. If a previous autonomous
+        # repair left a module syntactically broken, restore its latest backup
+        # before importing the action registry. main.py and ui.py are excluded.
+        try:
+            restore_broken_modules(logger=lambda msg: print(msg))
+        except Exception as e:
+            print(f"[BootSentry] Disabled: {e}")
+
         _inline_names = {t["name"] for t in TOOL_DECLARATIONS}
 
         # File-backed tools: every actions/*.py with a TOOL dict, discovered the
