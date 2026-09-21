@@ -185,6 +185,7 @@ class WhatsAppIncomingAgent:
         self._wpndb_seen: set[str] = set()
         self._notification_ready_logged = False
         self._wpndb_logged = False
+        self._recent_whatsapp_toast: tuple[str, str, float] | None = None
         self._visual_last_log = 0.0
         self._visual_present = False
         self._event_cooldown_until = 0.0
@@ -312,6 +313,14 @@ class WhatsAppIncomingAgent:
                 low = self._norm(blob)
                 if "whatsapp" not in low:
                     continue
+
+                caller_candidate = self._caller_from_text(text or blob)
+                self._recent_whatsapp_toast = (
+                    caller_candidate,
+                    text or blob,
+                    time.time(),
+                )
+
                 if not any(
                     hint in low
                     for hint in (
@@ -325,8 +334,7 @@ class WhatsAppIncomingAgent:
                 ):
                     continue
 
-                caller = self._caller_from_text(text or blob)
-                return caller, text or blob
+                return caller_candidate, text or blob
 
             if len(self._wpndb_seen) > 1000:
                 self._wpndb_seen = set(list(self._wpndb_seen)[-500:])
@@ -749,6 +757,11 @@ class WhatsAppIncomingAgent:
         if notification:
             caller = caller or notification[0]
             sources.append("notification")
+
+        if not caller and self._recent_whatsapp_toast:
+            recent_caller, recent_text, recent_at = self._recent_whatsapp_toast
+            if time.time() - recent_at < 8:
+                caller = recent_caller or self._caller_from_text(recent_text)
 
         if not caller:
             caller = self._best_whatsapp_chat_caller()
