@@ -1,6 +1,6 @@
 """Autonomous whole-PC computer-use agent for JARVIS."""
 from __future__ import annotations
-import io, json, re, time
+import io, json, re, time, threading
 from typing import Any
 from pathlib import Path
 from core import gemini
@@ -14,6 +14,19 @@ try:
     from pywinauto import Desktop
 except Exception:
     Desktop = None
+
+def _cancel_requested(cancel_event) -> bool:
+    """Return True when the parent JARVIS tool call has been cancelled."""
+    try:
+        return bool(cancel_event and cancel_event.is_set())
+    except Exception:
+        return False
+
+
+def _cancelled_result() -> str:
+    print("[ComputerUse] 🛑 Cancellation requested — stopping before next GUI action.")
+    return "computer_use cancelled by user."
+
 
 def _screen():
     if pyautogui is None: raise RuntimeError("PyAutoGUI is not installed.")
@@ -318,7 +331,10 @@ def _is_filename_text(text: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9_. -]+\.[A-Za-z0-9]{1,8}", value))
 
 
-def _execute(step, goal=""):
+def _execute(step, goal="", cancel_event=None):
+    if _cancel_requested(cancel_event):
+        return _cancelled_result()
+
     action = str(step.get("action","")).lower().strip()
     if action == "key":
         action = "press"
@@ -375,8 +391,12 @@ def _execute(step, goal=""):
             w, h = pyautogui.size()
             x = max(0, min(int(p.get("x", 0)), w - 1))
             y = max(0, min(int(p.get("y", 0)), h - 1))
+            if _cancel_requested(cancel_event):
+                return _cancelled_result()
             pyautogui.click(x, y)
             time.sleep(0.15)
+            if _cancel_requested(cancel_event):
+                return _cancelled_result()
 
     p["action"] = action
 
@@ -385,14 +405,19 @@ def _execute(step, goal=""):
         p["x"] = max(0, min(int(p.get("x", 0)), w - 1))
         p["y"] = max(0, min(int(p.get("y", 0)), h - 1))
 
+    if _cancel_requested(cancel_event):
+        return _cancelled_result()
     return computer_control(p)
 
 def computer_use(parameters=None, response=None, player=None, session_memory=None):
     params = parameters or {}; goal = str(params.get("goal","")).strip()
+    cancel_event = params.get("_cancel_event")
+    if _cancel_requested(cancel_event): return _cancelled_result()
     if not goal: return "computer_use requires a goal."
     max_steps = max(1,min(int(params.get("max_steps",20)),30)); verify_every = max(1,min(int(params.get("verify_every",2)),5))
     history=[]; print(f"[ComputerUse] ▶ {goal}")
     if player: player.write_log(f"[ComputerUse] {goal}")
+    if _cancel_requested(cancel_event): return _cancelled_result()
 
     # Always keep track of the app the user asked JARVIS to operate.
     # The visual loop will refocus it automatically whenever JARVIS or another
@@ -403,6 +428,7 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
     # the first screenshot. Never launch a duplicate if an existing window is available.
     m = re.search(r"open\s+([A-Za-z0-9][A-Za-z0-9 ._&'()+-]{0,60}?)(?=\s*(?:,|\band\b|\bthen\b|$))", goal, flags=re.I)
     if m:
+        if _cancel_requested(cancel_event): return _cancelled_result()
         app_name = m.group(1).strip().strip(" .,")
         if app_name:
             target_app = app_name
@@ -440,6 +466,8 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
     repeated_count = 0
 
     for n in range(1,max_steps+1):
+        if _cancel_requested(cancel_event):
+            return _cancelled_result()
         # Before EVERY screenshot, make sure the target app is in the foreground.
         # If a modal Open/Save/etc. dialog is currently visible, keep the dialog in front
         # so Gemini can operate it as part of the same app flow.
@@ -458,7 +486,11 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
         # The screenshot is deliberately captured AFTER focus correction, so Gemini
         # never plans from a screenshot of the wrong application.
         window=_window()
+        if _cancel_requested(cancel_event):
+            return _cancelled_result()
         decision=_decide(goal,history,image,width,height,window,target_app)
+        if _cancel_requested(cancel_event):
+            return _cancelled_result()
         if not decision:
             history.append({"step":str(n),"result":"No valid vision decision"})
             time.sleep(.5)
@@ -502,7 +534,9 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
             })
             continue
 
-        result=_execute(decision, goal)
+        if _cancel_requested(cancel_event):
+            return _cancelled_result()
+        result=_execute(decision, goal, cancel_event)
         history.append({
             "step":str(n),
             "action":action,
@@ -510,7 +544,12 @@ def computer_use(parameters=None, response=None, player=None, session_memory=Non
             "reason":str(decision.get("reason",""))[:200],
         })
         print(f"[ComputerUse] step {n}: {action} -> {result[:200]}")
-        time.sleep(.4)
+        for _ in range(4):
+            if _cancel_requested(cancel_event):
+                return _cancelled_result()
+            time.sleep(0.1)
+        if "cancelled by user" in result.lower():
+            return result
         if any(x in result.lower() for x in ("failed","error:","rejected action")): continue
         if n % verify_every == 0:
             try:
