@@ -279,7 +279,7 @@ def _phone_camera(action: str) -> str:
     action = action.lower().strip()
     if action == "open":
         ok, out, err = _d(["shell", "am", "start", "-a", "android.media.action.IMAGE_CAPTURE"], timeout=20)
-        return "Phone camera opened." if ok else f"Could not open the phone camera: \${err or out}"
+        return "Phone camera opened." if ok else f"Could not open the phone camera: {err or out}"
     if action == "close":
         ok, _, err = _d(["shell", "input", "keyevent", "4"], timeout=8)
         return "Phone camera closed." if ok else f"Could not close the phone camera: ${err}"
