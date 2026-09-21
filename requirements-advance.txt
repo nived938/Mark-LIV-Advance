@@ -15,3 +15,4 @@ winotify; sys_platform == "win32"
 pywinauto; sys_platform == "win32"
 pywin32; sys_platform == "win32"
 pycaw
+winappaudiorouter>=1.1.1
