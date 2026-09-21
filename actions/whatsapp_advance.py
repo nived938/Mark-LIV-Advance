@@ -278,10 +278,15 @@ def _click_call_button(kind):
 
 
 _CALL_SPEAKER = None
+_CALL_AUDIO_PREPARE = None
 
 def set_call_speaker(callback) -> None:
     global _CALL_SPEAKER
     _CALL_SPEAKER = callback
+
+def set_call_audio_prepare(callback) -> None:
+    global _CALL_AUDIO_PREPARE
+    _CALL_AUDIO_PREPARE = callback
 
 def _speak_to_active_call(message: str, caller: str = "", end_after: bool = False):
     callback = _CALL_SPEAKER
@@ -293,7 +298,7 @@ def _speak_to_active_call(message: str, caller: str = "", end_after: bool = Fals
         return False, str(exc)
 
 
-def whatsapp_advance(action, contact="", phone="", message="", confirmation="", speak=True):
+def whatsapp_advance(action, contact="", phone="", message="", confirmation="", speak=True, end_after=False):
     action = (action or "").lower().strip()
 
     if action in ("enable_busy_reply", "busy_mode_on", "auto_busy_on"):
@@ -336,7 +341,7 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
             return f"Could not accept the incoming WhatsApp call from {caller}: {error}"
 
         if message and bool(speak):
-            spoken, speech_error = _speak_to_active_call(message, caller, False)
+            spoken, speech_error = _speak_to_active_call(message, caller, bool(end_after))
             if not spoken:
                 return f"Accepted the WhatsApp call from {caller}, but could not speak to the caller: {speech_error}"
             return f"Accepted the WhatsApp call from {caller} and spoke the message."
@@ -428,6 +433,10 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
             except Exception as e:
                 return f"Could not open the WhatsApp contact: {e}"
         kind = "video" if action == "video_call" else "voice"
+        if bool(speak) and message and callable(_CALL_AUDIO_PREPARE):
+            prepared, prepare_error = _CALL_AUDIO_PREPARE()
+            if not prepared:
+                return f"Could not prepare call audio: {prepare_error}"
         ok, error = _click_call_button(kind)
         if not ok:
             return f"Opened WhatsApp to {target}, but I could not trigger the {kind} call control. {error}"
@@ -466,6 +475,7 @@ TOOL = {
             "message": {"type": "STRING", "description": "Message text"},
             "confirmation": {"type": "STRING", "description": "Legacy field, not required"},
             "speak": {"type": "BOOLEAN", "description": "For calls: true to let JARVIS speak to the caller; false to stay silent."},
+            "end_after": {"type": "BOOLEAN", "description": "For incoming-call speech: end the call after JARVIS finishes speaking."},
         },
         "required": ["action"],
     },
