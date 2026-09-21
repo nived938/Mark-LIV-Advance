@@ -5,7 +5,7 @@
     <application
         android:allowBackup="false"
         android:label="JARVIS Connect"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+        android:theme="@style/Theme.JarvisConnect">
         <activity
             android:name=".MainActivity"
             android:exported="true">
