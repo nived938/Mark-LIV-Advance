@@ -69,7 +69,6 @@ from actions.proactive         import ProactiveEngine
 from actions.background_monitor import (
     add_monitor, remove_monitor, list_monitors, check_all as monitor_check_all,
 )
-from actions.whatsapp_incoming_agent import start_incoming_call_agent
 from actions.file_search_advance import set_search_logger
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import (
@@ -641,10 +640,8 @@ class JarvisLive:
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
-        self._whatsapp_incoming_agent = None       # Windows WhatsApp incoming-call monitor
         self._call_attention_monitor = None         # Generic desktop-call monitor
         self._call_event_seen: dict[str, float] = {}
-        self._whatsapp_rule_seen: dict[str, float] = {}
         self._call_speech_active = False
         self._pending_call_reports: list[dict] = []
         self._live_quota_until = 0.0
@@ -689,13 +686,6 @@ class JarvisLive:
         self.ui.get_plugins = self._plugin_registry.list_for_ui
         self.ui.get_plugin_settings = self._plugin_registry.settings_schemas  # ⚙ settings tab
         self.ui.request_say = self.plugin_say
-        try:
-            from actions.whatsapp_advance import set_call_speaker, set_call_audio_prepare
-            set_call_speaker(self._speak_to_active_call)
-            set_call_audio_prepare(self._prepare_call_audio)
-        except Exception as e:
-            print(f"[CallAudio] Callback registration failed: {e}")   # plugins: mid-task speech channel
-
         # ── Wake word ────────────────────────────────────────────────────────
         # _awake gates the mic (see _listen_audio) and the background speakers.
         # It is True whenever wake word is OFF, so default behaviour is unchanged.
@@ -865,11 +855,6 @@ class JarvisLive:
         self._cancel_active_tools()
 
         try:
-            if self._whatsapp_incoming_agent is not None:
-                self._whatsapp_incoming_agent.stop()
-        except Exception:
-            pass
-        try:
             if self._call_attention_monitor is not None:
                 self._call_attention_monitor.stop()
         except Exception:
@@ -976,107 +961,54 @@ class JarvisLive:
         manual = self._dashboard.get_manual_url()
         return url, key, f"{url}/auto-login?key={key}", manual
 
-    def _prepare_call_audio(self):
-        loop = getattr(self, "_loop", None)
-        if loop is None:
-            return False, "JARVIS audio loop is not ready."
-        return CALL_AUDIO.begin(loop, self._enqueue_caller_audio)
-
-    def _enqueue_caller_audio(self, packet) -> None:
-        if not self.out_queue or not packet:
-            return
-        try:
-            self.out_queue.put_nowait(packet)
-        except Exception:
-            pass
-
-    def _prepare_call_speech_route(self, app: str = "WhatsApp"):
-        """Prepare the best available call-speech route before accepting a call."""
-        loop = getattr(self, "_loop", None)
-
-        # Full two-way cable bridge first.
-        if loop is not None:
-            ok, detail = CALL_AUDIO.begin(loop, self._enqueue_caller_audio)
-            if ok:
-                return True, "two-way", detail
-
-        # WhatsApp only needs one-way speech for an automatic busy message.
-        # This supports both Stereo Mix/loopback and a normal two-endpoint
-        # virtual cable. The route is prepared BEFORE accepting the call.
-        one_way_detail = ""
-        if str(app).casefold() == "whatsapp" and not CALL_AUDIO.one_way_active:
-            ok_one, detail_one = CALL_AUDIO.begin_one_way()
-            if ok_one:
-                return True, "one-way", detail_one
-            one_way_detail = str(detail_one or "").strip()
-
-        if loop is None:
-            return False, "none", (
-                "JARVIS audio loop is not ready."
-                + (f" One-way route also unavailable: {one_way_detail}" if one_way_detail else "")
-            )
-
-        two_way_detail = CALL_AUDIO.status()
-        if one_way_detail:
-            return False, "none", (
-                f"Two-way call audio unavailable: {two_way_detail} "
-                f"One-way call speech unavailable: {one_way_detail}"
-            )
-        return False, "none", two_way_detail
-
-    def _speak_to_active_call(self, message: str, caller: str = "", end_after: bool = False, app: str = "WhatsApp"):
+    def _speak_to_active_call(
+        self,
+        message: str,
+        caller: str = "",
+        end_after: bool = False,
+        app: str = "",
+    ):
+        """Speak to a supported non-WhatsApp desktop call through the generic bridge."""
         message = str(message or "").strip()
         if not message:
             return False, "No call message was provided."
 
-        route = "none"
-        detail = ""
+        loop = getattr(self, "_loop", None)
+        if loop is None:
+            return False, "JARVIS audio loop is not ready."
 
-        if CALL_AUDIO.active:
-            route = "two-way"
-        elif CALL_AUDIO.one_way_active:
-            route = "one-way"
-        else:
-            ok, route, detail = self._prepare_call_speech_route(app)
-
-        if route == "none":
-            self.ui.write_log(f"ERR: Call audio bridge unavailable — {detail}")
-            return False, detail
+        if not CALL_AUDIO.active:
+            ok, detail = CALL_AUDIO.begin(loop, self._enqueue_caller_audio)
+            if not ok:
+                self.ui.write_log(f"ERR: Call audio bridge unavailable — {detail}")
+                return False, detail
 
         self._call_speech_active = True
         self.ui.write_log(
             f"SYS: Speaking to {caller or 'caller'} through the active call "
-            f"({route} audio route)."
+            "(two-way audio route)."
         )
         try:
-            if route == "one-way":
-                spoken, error = CALL_AUDIO.speak_one_way(message)
-            else:
-                spoken, error = CALL_AUDIO.speak_to_phone(message)
+            spoken, error = CALL_AUDIO.speak_to_phone(message)
         finally:
             self._call_speech_active = False
 
         if not spoken:
-            stopped = "stopped" in str(error).lower()
             CALL_AUDIO.stop()
-            return (True, "Call speech stopped.") if stopped else (False, error)
+            return False, error
 
         if end_after:
             try:
-                if str(app).casefold() == "whatsapp":
-                    from actions.whatsapp_incoming_agent import get_incoming_agent
-                    ended, end_error = get_incoming_agent().hang_up()
-                else:
-                    from actions.call_control import call_control
-                    end_result = call_control({"action": "hangup", "app": app})
-                    ended = (
-                        "failed" not in end_result.casefold()
-                        and "not found" not in end_result.casefold()
-                    )
-                    end_error = end_result
+                from actions.call_control import call_control
+                end_result = call_control({"action": "hangup", "app": app})
+                ended = (
+                    "failed" not in end_result.casefold()
+                    and "not found" not in end_result.casefold()
+                    and "no matching" not in end_result.casefold()
+                )
                 CALL_AUDIO.stop()
                 if not ended:
-                    return False, f"Spoke to the caller, but could not end the call: {end_error}"
+                    return False, f"Spoke to the caller, but could not end the call: {end_result}"
                 return True, "Spoke to the caller and ended the call."
             except Exception as exc:
                 CALL_AUDIO.stop()
@@ -1184,13 +1116,6 @@ class JarvisLive:
                     self.ui.write_log(f"ERR: {accepted}")
                 return
 
-        if app.casefold() == "whatsapp":
-            from types import SimpleNamespace
-            self._on_whatsapp_incoming_call(
-                SimpleNamespace(caller=caller or "someone", app="WhatsApp")
-            )
-            return
-
         self.ui.write_log(
             f"SYS: Incoming {app} call"
             + (f" from {caller}" if caller else "")
@@ -1236,293 +1161,6 @@ class JarvisLive:
             asyncio.run_coroutine_threadsafe(_announce(), loop)
         except Exception as exc:
             print(f"[CallAttention] Announcement scheduling failed: {exc}")
-
-    def _on_whatsapp_incoming_call(self, call) -> None:
-        """Handle a native WhatsApp incoming call and its temporary call rules."""
-        caller = str(getattr(call, "caller", "") or "").strip()
-        try:
-            from actions.whatsapp_incoming_agent import get_incoming_agent
-            agent = get_incoming_agent()
-            pending = agent.pending
-            if pending and getattr(pending, "caller", ""):
-                caller = str(pending.caller).strip()
-            if not caller or caller.casefold() in {
-                "someone", "unknown caller", "the caller"
-            }:
-                caller = str(agent._best_whatsapp_chat_caller() or "").strip()
-        except Exception:
-            pass
-        caller = caller or "unknown caller"
-
-        # The dedicated WhatsApp detector and another native UI signal can
-        # describe the same ringing call milliseconds apart. Apply a single
-        # central debounce here so one physical call can never execute the
-        # temporary rule twice.
-        rule_key = f"{caller.casefold()}|whatsapp"
-        now_call = time.monotonic()
-        previous_call = self._whatsapp_rule_seen.get(rule_key, 0.0)
-        if now_call - previous_call < 12.0:
-            return
-        self._whatsapp_rule_seen[rule_key] = now_call
-        if len(self._whatsapp_rule_seen) > 100:
-            cutoff = now_call - 60.0
-            self._whatsapp_rule_seen = {
-                key: stamp
-                for key, stamp in self._whatsapp_rule_seen.items()
-                if stamp >= cutoff
-            }
-
-        self.ui.write_log(f"SYS: Incoming WhatsApp call from {caller}.")
-
-        # Temporary call rules are local and deterministic. WhatsApp has a
-        # specialized detector/controller, so apply the active rule before the
-        # persistent WhatsApp busy setting or normal "accept/decline?" prompt.
-        rule = active_rule()
-
-        if rule:
-            rule_action = str(rule.get("action") or "").strip().lower()
-
-            if rule_action == "accept":
-                try:
-                    from actions.whatsapp_incoming_agent import get_incoming_agent
-                    agent = get_incoming_agent()
-                    ok, detail = agent.accept()
-                    outcome = "auto-accepted" if ok else "auto-accept-failed"
-                    record_call("WhatsApp", caller, outcome, source="call-rule")
-                    self._queue_call_report("WhatsApp", caller, outcome)
-                    self.ui.write_log(
-                        f"SYS: WhatsApp temporary accept rule "
-                        f"{'complete' if ok else 'failed'}"
-                        + (f" — {detail}" if detail else "")
-                    )
-                except Exception as exc:
-                    record_call("WhatsApp", caller, "auto-accept-failed", source="call-rule")
-                    self._queue_call_report("WhatsApp", caller, "auto-accept-failed")
-                    self.ui.write_log(
-                        f"ERR: WhatsApp temporary accept rule failed — {exc}"
-                    )
-                return
-
-            if rule_action == "busy":
-                busy_message = str(
-                    rule.get("message")
-                    or "Hello {caller}, unfortunately Nived is busy. Call him again later. Bye"
-                ).replace("{caller}", caller or "there")
-
-                def _handle_rule_busy():
-                    try:
-                        from actions.whatsapp_incoming_agent import get_incoming_agent
-                        agent = get_incoming_agent()
-
-                        # Prepare call speech BEFORE accepting so WhatsApp can
-                        # inherit the virtual microphone from the start of the call.
-                        route_ok, _route_kind, route_detail = (
-                            self._prepare_call_speech_route("WhatsApp")
-                        )
-
-                        # Capture the native WhatsApp PID before accept() clears the
-                        # pending call. We bind that exact process after acceptance
-                        # because its audio-recording session may not exist earlier.
-                        call_window = getattr(agent.pending, "window", None)
-                        whatsapp_pid = None
-                        try:
-                            if call_window is not None:
-                                whatsapp_pid = int(call_window.process_id())
-                        except Exception:
-                            whatsapp_pid = None
-
-                        accepted, accept_error = agent.accept()
-                        if not accepted:
-                            record_call(
-                                "WhatsApp",
-                                caller,
-                                "auto-busy-accept-failed",
-                                source="call-rule",
-                                message=busy_message,
-                            )
-                            self._queue_call_report(
-                                "WhatsApp", caller, "auto-busy-accept-failed"
-                            )
-                            self.ui.write_log(
-                                f"ERR: WhatsApp temporary busy rule failed — {accept_error}"
-                            )
-                            return
-
-                        if accepted and CALL_AUDIO.one_way_active and whatsapp_pid:
-                            bound, bound_detail = CALL_AUDIO.bind_one_way_to_process(
-                                whatsapp_pid
-                            )
-                            if bound:
-                                self.ui.write_log(
-                                    f"SYS: {bound_detail}"
-                                )
-                            else:
-                                self.ui.write_log(
-                                    f"ERR: WhatsApp per-app microphone routing failed — {bound_detail}"
-                                )
-
-                        if route_ok or CALL_AUDIO.active or CALL_AUDIO.one_way_active:
-                            spoken, speech_error = self._speak_to_active_call(
-                                busy_message,
-                                caller or "caller",
-                                True,
-                                "WhatsApp",
-                            )
-                        else:
-                            spoken = False
-                            speech_error = route_detail
-
-                        if spoken:
-                            outcome = "auto-busy"
-                            detail = "spoke the busy message and ended the call."
-                        else:
-                            # JARVIS voice injection needs the optional virtual
-                            # audio bridge. Never let that hardware dependency
-                            # turn an accepted call into a false failure. Hang up
-                            # and send the same busy message as a normal WhatsApp
-                            # chat message instead.
-                            try:
-                                agent.hang_up()
-                            except Exception:
-                                pass
-
-                            sent, send_error = False, ""
-                            try:
-                                from actions.whatsapp_advance import (
-                                    _send_message_desktop,
-                                    _send_by_phone,
-                                    _clean_phone,
-                                )
-                                # Incoming notifications sometimes expose only the
-                                # caller's international number. In that case use
-                                # WhatsApp's native whatsapp://send URI instead of
-                                # trying to verify a contact header by name.
-                                if caller and caller.startswith("+") and _clean_phone(caller):
-                                    sent, send_error = _send_by_phone(
-                                        caller,
-                                        busy_message,
-                                    )
-                                else:
-                                    sent, send_error = _send_message_desktop(
-                                        caller,
-                                        busy_message,
-                                    )
-                            except Exception as exc:
-                                send_error = str(exc)
-
-                            if sent:
-                                outcome = "auto-busy-message-fallback"
-                                detail = (
-                                    "voice call accepted, but JARVIS call audio "
-                                    f"was unavailable ({speech_error}); "
-                                    "sent the busy message in WhatsApp as fallback."
-                                )
-                            else:
-                                outcome = "auto-busy-failed"
-                                detail = (
-                                    f"voice call speech unavailable ({speech_error}); "
-                                    f"WhatsApp fallback message also failed ({send_error})."
-                                )
-
-                        record_call(
-                            "WhatsApp",
-                            caller,
-                            outcome,
-                            source="call-rule",
-                            message=busy_message,
-                        )
-                        self._queue_call_report("WhatsApp", caller, outcome)
-                        self.ui.write_log(
-                            f"SYS: WhatsApp temporary busy rule "
-                            f"{'complete' if outcome != 'auto-busy-failed' else 'failed'} — "
-                            f"{detail}"
-                        )
-                    except Exception as exc:
-                        try:
-                            from actions.whatsapp_incoming_agent import get_incoming_agent
-                            get_incoming_agent().hang_up()
-                        except Exception:
-                            pass
-                        record_call(
-                            "WhatsApp",
-                            caller,
-                            "auto-busy-failed",
-                            source="call-rule",
-                            message=busy_message,
-                        )
-                        self._queue_call_report("WhatsApp", caller, "auto-busy-failed")
-                        self.ui.write_log(
-                            f"ERR: WhatsApp temporary busy rule failed — {exc}"
-                        )
-
-                threading.Thread(
-                    target=_handle_rule_busy,
-                    name="WhatsAppCallRuleBusy",
-                    daemon=True,
-                ).start()
-                return
-
-        try:
-            from actions.whatsapp_incoming_agent import get_busy_mode, auto_busy_reply
-            busy_enabled, _busy_message = get_busy_mode()
-        except Exception:
-            busy_enabled = False
-
-        if busy_enabled:
-            def _handle_busy():
-                try:
-                    ok, detail = auto_busy_reply(call)
-                    self.ui.write_log(
-                        f"SYS: WhatsApp auto-busy {'complete' if ok else 'failed'} — {detail}"
-                    )
-                except Exception as exc:
-                    self.ui.write_log(f"ERR: WhatsApp auto-busy failed — {exc}")
-
-            threading.Thread(
-                target=_handle_busy,
-                name="WhatsAppAutoBusyReply",
-                daemon=True,
-            ).start()
-            return
-
-        # An incoming call is an external event that should reach the user even
-        # when wake-word mode has put JARVIS to sleep.
-        if self._wake_enabled and not self._awake:
-            self.wake(reason="WhatsApp incoming call")
-        loop = getattr(self, "_loop", None)
-        if not loop or not self.session:
-            print(f"[WhatsAppAgent] Call from {caller} detected before the Live session was ready.")
-            return
-
-        async def _announce():
-            try:
-                await self.session.send_client_content(
-                    turns={
-                        "role": "user",
-                        "parts": [{
-                            "text": (
-                                "[WHATSAPP_INCOMING_CALL]\n"
-                                f"A native Windows WhatsApp incoming call is ringing from {caller}. "
-                                "The call is still pending. Speak to the user immediately: "
-                                f"Incoming WhatsApp call from {caller}. Should I accept or decline? "
-                                "Do not accept or decline it yourself. Wait for the user's answer. "
-                                "If the user says accept, call whatsapp_advance with action='accept_incoming'. "
-                                "If the user says decline, call action='decline_incoming'. "
-                                "If they ask to decline and send a message, pass that message in the "
-                                "message parameter. If they ask to accept and send a message, pass it "
-                                "in message."
-                            )
-                        }],
-                    },
-                    turn_complete=True,
-                )
-            except Exception as exc:
-                print(f"[WhatsAppAgent] Could not announce incoming call: {exc}")
-
-        try:
-            asyncio.run_coroutine_threadsafe(_announce(), loop)
-        except Exception as exc:
-            print(f"[WhatsAppAgent] Announcement scheduling failed: {exc}")
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
@@ -3051,19 +2689,7 @@ class JarvisLive:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
 
-        # Windows WhatsApp incoming-call agent. It watches native WhatsApp
-        # notifications/UIA/visual controls and never uses WhatsApp Web.
-        try:
-            self._whatsapp_incoming_agent = start_incoming_call_agent(
-                self._on_whatsapp_incoming_call
-            )
-        except Exception as e:
-            print(f"[WhatsAppAgent] Disabled: {e}")
-            self._whatsapp_incoming_agent = None
-
-        # Generic desktop call detector: WPNDB first, then visible-window
-        # corroboration. WhatsApp is excluded because its specialized agent has
-        # direct call-control support.
+        # Generic desktop call detector for supported non-WhatsApp calling apps.
         try:
             self._call_attention_monitor = CallAttentionMonitor(
                 on_call=self._on_external_call,
@@ -3373,11 +2999,6 @@ class JarvisLive:
             print(f"[JARVIS] Reconnecting in {delay}s...")
             await asyncio.sleep(delay)
 
-        try:
-            if self._whatsapp_incoming_agent is not None:
-                self._whatsapp_incoming_agent.stop()
-        except Exception:
-            pass
         try:
             if self._call_attention_monitor is not None:
                 self._call_attention_monitor.stop()
