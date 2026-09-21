@@ -420,6 +420,14 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
         target = contact or phone
         if not target:
             return "A WhatsApp contact name or phone number is required."
+
+        # Plain "Call <person>" gets the requested JARVIS handoff introduction.
+        # "and you don't need to speak" is represented by speak=false, which
+        # leaves the phone's normal microphone/speaker untouched.
+        call_intro = str(message or "").strip()
+        if bool(speak) and not call_intro:
+            call_intro = "Nived is back. I will transfer the conversation to Nived."
+
         if not _open_desktop():
             return "Could not open the WhatsApp desktop app."
         win = _focus_whatsapp(10)
@@ -436,7 +444,7 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
             except Exception as e:
                 return f"Could not open the WhatsApp contact: {e}"
         kind = "video" if action == "video_call" else "voice"
-        if bool(speak) and message and callable(_CALL_AUDIO_PREPARE):
+        if bool(speak) and call_intro and callable(_CALL_AUDIO_PREPARE):
             prepared, prepare_error = _CALL_AUDIO_PREPARE()
             if not prepared:
                 return f"Could not prepare call audio: {prepare_error}"
@@ -444,9 +452,9 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
         if not ok:
             return f"Opened WhatsApp to {target}, but I could not trigger the {kind} call control. {error}"
 
-        if bool(speak) and message:
+        if bool(speak) and call_intro:
             spoken, speech_error = _speak_to_active_call(
-                message,
+                call_intro,
                 target,
                 False,
             )
@@ -462,7 +470,7 @@ TOOL = {
     "name": "whatsapp_advance",
     "description": (
         "WINDOWS WHATSAPP DESKTOP ONLY. Default tool for WhatsApp on this PC. "
-        "Use it for messaging, voice/video calls, incoming-call controls, and automatic busy-reply settings. "
+        "Use it for messaging, voice/video calls, incoming-call controls, call introductions, and automatic busy-reply settings. "
         "Never use WhatsApp Web. Incoming calls are detected in the native Windows WhatsApp call dialog. "
         "enable_busy_reply enables persistent automatic handling: decline every incoming WhatsApp call and "
         "send the configured busy message to the caller; optional message sets the message. "
