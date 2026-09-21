@@ -623,6 +623,7 @@ class JarvisLive:
         self._call_attention_monitor = None         # Generic desktop-call monitor
         self._call_event_seen: dict[str, float] = {}
         self._call_speech_active = False
+        self._pending_call_reports: list[dict] = []
         self._live_quota_until = 0.0
         self._last_live_error = ""
 
@@ -998,6 +999,50 @@ class JarvisLive:
         CALL_AUDIO.stop()
         return True, "Finished speaking to the caller."
 
+    def _queue_call_report(self, app: str, caller: str, action: str) -> None:
+        self._pending_call_reports.append({
+            "app": str(app or "Unknown app"),
+            "caller": str(caller or "unknown caller"),
+            "action": str(action or "detected"),
+            "at": time.time(),
+        })
+        self._pending_call_reports = self._pending_call_reports[-10:]
+
+    async def _run_call_report_watch(self):
+        while True:
+            await asyncio.sleep(1.0)
+            if not self._pending_call_reports or not self.session or not self._awake:
+                continue
+            if self._call_speech_active or (time.time() - self._last_user_speech > 20):
+                continue
+            first_at = float(self._pending_call_reports[0].get("at", 0))
+            if self._last_user_speech <= first_at:
+                continue
+            with self._speaking_lock:
+                if self._is_speaking:
+                    continue
+
+            items = list(self._pending_call_reports)
+            self._pending_call_reports.clear()
+            report = "; ".join(
+                f"{x.get('app')} call from {x.get('caller')} ({x.get('action')})"
+                for x in items[:8]
+            )
+            try:
+                await self.session.send_client_content(
+                    turns={"role": "user", "parts": [{
+                        "text": (
+                            "[CALL_RETURN_REPORT] The user has returned after automatic "
+                            f"call handling. Briefly tell them: {report}. Then continue "
+                            "normally. Do not mention this tag and do not call tools."
+                        )
+                    }]},
+                    turn_complete=True,
+                )
+            except Exception as exc:
+                self._pending_call_reports = items + self._pending_call_reports
+                print(f"[CallReport] {exc}")
+
     def _stop_call_speech(self):
         if not self._call_speech_active:
             return False
@@ -1032,7 +1077,9 @@ class JarvisLive:
             if action == "accept":
                 from actions.call_control import call_control
                 result = call_control({"action": "accept", "app": app})
-                record_call(app, caller, "auto-accepted" if "failed" not in result.lower() else "auto-accept-failed", source=source)
+                outcome = "auto-accepted" if "failed" not in result.lower() else "auto-accept-failed"
+                record_call(app, caller, outcome, source=source)
+                self._queue_call_report(app, caller, outcome)
                 self.ui.write_log(f"SYS: {result}")
                 return
             if action == "busy":
@@ -1041,10 +1088,13 @@ class JarvisLive:
                 if "failed" not in accepted.lower() and "no matching" not in accepted.lower():
                     text = str(rule.get("message") or "").replace("{caller}", caller or "there")
                     ok, detail = self._speak_to_active_call(text, caller or "caller", True, app)
-                    record_call(app, caller, "auto-busy" if ok else "auto-busy-failed", source=source, message=text)
+                    outcome = "auto-busy" if ok else "auto-busy-failed"
+                    record_call(app, caller, outcome, source=source, message=text)
+                    self._queue_call_report(app, caller, outcome)
                     self.ui.write_log(f"SYS: {detail}")
                 else:
                     record_call(app, caller, "auto-busy-accept-failed", source=source)
+                    self._queue_call_report(app, caller, "auto-busy-accept-failed")
                     self.ui.write_log(f"ERR: {accepted}")
                 return
 
@@ -2755,6 +2805,7 @@ class JarvisLive:
                     tg.create_task(self._run_background_monitor())
                     tg.create_task(self._run_proactive_mode())
                     tg.create_task(self._run_sleep_watch())
+                    tg.create_task(self._run_call_report_watch())
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
 
