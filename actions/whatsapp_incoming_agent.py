@@ -113,8 +113,24 @@ def auto_busy_reply(call) -> tuple[bool, str]:
         caller = agent._best_whatsapp_chat_caller()
     caller = caller or "there"
 
+    # Prepare one-way speech before accepting. If Stereo Mix/loopback is
+    # available, WhatsApp will inherit it as the communications microphone.
+    one_way_detail = ""
+    try:
+        from core.call_audio import ROUTER
+        ok_route, one_way_detail = ROUTER.begin_one_way()
+        if not ok_route:
+            one_way_detail = str(one_way_detail or "")
+    except Exception as exc:
+        one_way_detail = str(exc)
+
     ok, error = agent.accept()
     if not ok:
+        try:
+            from core.call_audio import ROUTER
+            ROUTER.stop_one_way()
+        except Exception:
+            pass
         return False, f"Could not accept the WhatsApp call from {caller}: {error}"
 
     try:
