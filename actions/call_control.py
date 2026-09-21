@@ -21,6 +21,7 @@ except Exception:
 
 _ACCEPT = ("accept", "answer", "pick up", "join", "allow")
 _DECLINE = ("decline", "reject", "ignore", "hang up", "end call", "cut", "dismiss")
+_HANGUP = ("hang up", "end call", "disconnect", "leave", "end")
 _CALL_WORDS = ("incoming", "ringing", "calling", "call", "voice call", "video call")
 
 
@@ -102,7 +103,7 @@ TOOL = {
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "action": {"type": "STRING", "description": "accept | decline | status"},
+            "action": {"type": "STRING", "description": "accept | decline | hangup | status"},
             "app": {"type": "STRING", "description": "Optional app name to target."},
         },
         "required": ["action"],
@@ -136,9 +137,9 @@ def call_control(parameters: dict | None = None, **_) -> str:
             if matches else "No supported ringing call window is visible."
         )
 
-    hints = _ACCEPT if action == "accept" else _DECLINE if action == "decline" else ()
+    hints = _ACCEPT if action == "accept" else _DECLINE if action == "decline" else _HANGUP if action == "hangup" else ()
     if not hints:
-        return "Action must be accept, decline, or status."
+        return "Action must be accept, decline, hangup, or status."
 
     for window in windows:
         try:
@@ -162,7 +163,8 @@ def call_control(parameters: dict | None = None, **_) -> str:
             except Exception:
                 pass
             if pyautogui:
-                pyautogui.press("enter" if action == "accept" else "esc")
+                key = "enter" if action == "accept" else "esc"
+                pyautogui.press(key)
                 time.sleep(0.4)
                 return f"Sent the {action} key to {window.window_text()}."
         except Exception:

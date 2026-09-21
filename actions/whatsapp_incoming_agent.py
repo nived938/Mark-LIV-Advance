@@ -106,24 +106,43 @@ def auto_busy_reply(call) -> tuple[bool, str]:
     caller = str(getattr(call, "caller", "") or "").strip()
     if not caller or caller.lower() in {"someone", "unknown caller", "the caller"}:
         caller = agent._best_whatsapp_chat_caller()
+    caller = caller or "there"
 
-    ok, error = agent.decline()
+    # Prepare the virtual call-audio route before accepting. This is what makes
+    # the subsequent speech go to the phone instead of the WhatsApp chat box.
+    try:
+        from actions.whatsapp_advance import _CALL_AUDIO_PREPARE
+        if callable(_CALL_AUDIO_PREPARE):
+            prepared, prepare_error = _CALL_AUDIO_PREPARE()
+            if not prepared:
+                return False, prepare_error
+    except Exception as exc:
+        return False, f"Call audio bridge unavailable: {exc}"
+
+    ok, error = agent.accept()
     if not ok:
-        return False, f"Could not decline the WhatsApp call from {caller or 'the caller'}: {error}"
-
-    if not caller:
-        return True, "Call declined, but the caller could not be identified for the busy message."
+        try:
+            from core.call_audio import ROUTER
+            ROUTER.stop()
+        except Exception:
+            pass
+        return False, f"Could not accept the WhatsApp call from {caller}: {error}"
 
     try:
-        from actions.whatsapp_advance import _send_message_desktop
-        sent, send_error = _send_message_desktop(caller, message)
+        from actions.whatsapp_advance import _speak_to_active_call
+        spoken, speech_error = _speak_to_active_call(
+            message or f"Hello {caller}, unfortunately Nived is busy, Call him again later, Bye",
+            caller,
+            True,
+        )
+        return spoken, speech_error
     except Exception as exc:
-        sent, send_error = False, str(exc)
-
-    if not sent:
-        return False, f"Declined the WhatsApp call from {caller}, but could not send the busy message: {send_error}"
-
-    return True, f"Declined the WhatsApp call from {caller} and sent the busy message."
+        try:
+            from core.call_audio import ROUTER
+            ROUTER.stop()
+        except Exception:
+            pass
+        return False, str(exc)
 
 
 _GENERIC = {
@@ -166,6 +185,7 @@ class WhatsAppIncomingAgent:
         self._wpndb_seen: set[str] = set()
         self._notification_ready_logged = False
         self._wpndb_logged = False
+        self._recent_whatsapp_toast: tuple[str, str, float] | None = None
         self._visual_last_log = 0.0
         self._visual_present = False
         self._event_cooldown_until = 0.0
@@ -293,6 +313,14 @@ class WhatsAppIncomingAgent:
                 low = self._norm(blob)
                 if "whatsapp" not in low:
                     continue
+
+                caller_candidate = self._caller_from_text(text or blob)
+                self._recent_whatsapp_toast = (
+                    caller_candidate,
+                    text or blob,
+                    time.time(),
+                )
+
                 if not any(
                     hint in low
                     for hint in (
@@ -306,8 +334,7 @@ class WhatsAppIncomingAgent:
                 ):
                     continue
 
-                caller = self._caller_from_text(text or blob)
-                return caller, text or blob
+                return caller_candidate, text or blob
 
             if len(self._wpndb_seen) > 1000:
                 self._wpndb_seen = set(list(self._wpndb_seen)[-500:])
@@ -612,29 +639,55 @@ class WhatsAppIncomingAgent:
         return results
 
     def _best_whatsapp_chat_caller(self) -> str:
-        # The native popup can be a WebView/non-client surface with no caller
-        # text. WhatsApp normally activates the caller's chat, so use a short
-        # visible chat-header/button label as the fallback.
-        found = []
-        for window in self._find_whatsapp_windows():
+        # Prefer human-looking Text controls in the active WhatsApp window.
+        # The old "shortest string" heuristic frequently selected labels such
+        # as "Chats" or "Search". Score candidates instead.
+        candidates = []
+        reject_exact = set(_GENERIC) | {
+            "chats", "calls", "status", "updates", "settings", "new chat",
+            "communities", "archived", "search",
+        }
+        reject_contains = (
+            "type a message", "web content", "whatsapp business", "missed call",
+            "voice call", "video call", "no answer", "unread message",
+        )
+
+        windows = self._find_whatsapp_windows()
+        for window in windows:
             if not self._looks_like_whatsapp(window):
                 continue
             try:
                 for control in window.descendants():
                     text = self._safe_text(control).strip()
                     low = self._norm(text)
-                    if not text or low in _GENERIC or len(text) > 60:
+                    if not text or low in reject_exact or len(text) > 70:
                         continue
-                    if any(x in low for x in ("search", "type a message", "chat list", "whatsapp business", "web content")):
+                    if any(token in low for token in reject_contains):
                         continue
-                    if any(x in low for x in ("voice call", "video call", "missed call", "no answer")):
+                    if low.isdigit() and len(low) > 5:
                         continue
-                    found.append(text)
+                    # Prefer Text/Button controls that look like a contact name.
+                    try:
+                        control_type = str(control.element_info.control_type or "").lower()
+                    except Exception:
+                        control_type = ""
+                    score = 0
+                    if control_type == "text":
+                        score += 6
+                    if 2 <= len(text) <= 40:
+                        score += 5
+                    if any(ch.isalpha() for ch in text):
+                        score += 4
+                    if len(text.split()) <= 5:
+                        score += 2
+                    candidates.append((score, text))
             except Exception:
                 continue
-        if not found:
+
+        if not candidates:
             return ""
-        return min(found, key=len)
+        candidates.sort(key=lambda item: (-item[0], len(item[1])))
+        return candidates[0][1]
 
     def _extract_caller(self, window) -> str:
         texts = []
@@ -698,11 +751,20 @@ class WhatsAppIncomingAgent:
             caller = db_notification[0]
             sources.append("wpndb")
 
-        # Detector 1.
+        # Detector 1. If it is only a generic WhatsApp toast, retain it as a
+        # recent candidate and let UIA/visual call controls corroborate it.
         notification = self._poll_notifications()
         if notification:
             caller = caller or notification[0]
             sources.append("notification")
+
+        if not caller and self._recent_whatsapp_toast:
+            recent_caller, recent_text, recent_at = self._recent_whatsapp_toast
+            if time.time() - recent_at < 8:
+                caller = recent_caller or self._caller_from_text(recent_text)
+
+        if not caller:
+            caller = self._best_whatsapp_chat_caller()
 
         # Detector 3a: UI Automation.
         for window in self._find_whatsapp_windows():
@@ -736,7 +798,9 @@ class WhatsAppIncomingAgent:
             accept_point, decline_point = points
             sources.append("vision")
             return IncomingCall(
-                caller=caller or self._caller_from_text(notification[1]) or "unknown caller",
+                caller=caller or self._caller_from_text(
+                    (notification[1] if notification else (db_notification[1] if db_notification else ""))
+                ) or "unknown caller",
                 window=None,
                 accept_control=None,
                 decline_control=None,
@@ -796,6 +860,53 @@ class WhatsAppIncomingAgent:
                 self._last_signature = ""
             self._event_cooldown_until = time.time() + 5.0
         return ok, error
+
+    def hang_up(self) -> tuple[bool, str]:
+        """End an already accepted WhatsApp call using an explicit Hang up/End control."""
+        win = None
+        if Desktop is not None:
+            for window in self._find_whatsapp_windows():
+                if self._looks_like_whatsapp(window):
+                    win = window
+                    break
+
+        if win is None:
+            return False, "WhatsApp call window was not found."
+
+        try:
+            controls = win.descendants(control_type="Button")
+        except Exception:
+            controls = []
+
+        hints = ("hang up", "end call", "end", "disconnect", "leave call")
+        for control in controls:
+            try:
+                name = self._norm(self._safe_text(control))
+                aid = self._norm(self._safe_id(control))
+                blob = f"{name} {aid}"
+                if any(hint in blob for hint in hints):
+                    ok, error = self._click(control)
+                    if ok:
+                        with self._lock:
+                            self._pending = None
+                        self._event_cooldown_until = time.time() + 5.0
+                    return ok, error
+            except Exception:
+                continue
+
+        # Visual fallback: the red control used by incoming-call detection is
+        # often the active-call hang-up button as well.
+        points = self._visual_call_controls()
+        if points:
+            _accept_point, decline_point = points
+            ok, error = self._click_point(decline_point)
+            if ok:
+                with self._lock:
+                    self._pending = None
+                self._event_cooldown_until = time.time() + 5.0
+            return ok, error
+
+        return False, "No Hang up/End call control was exposed by WhatsApp."
 
     def decline(self) -> tuple[bool, str]:
         call = self._fresh_or_pending()
