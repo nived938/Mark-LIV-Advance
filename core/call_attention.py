@@ -1,8 +1,7 @@
 """Generic Windows desktop-call attention monitor.
 
-Uses the same core strategy as Brahma Echo: inspect the Windows notification
-database first, then corroborate with visible application windows. WhatsApp is
-normally handled by its specialized detector, so callers may exclude it.
+Uses the Windows notification database and visible application windows for
+supported desktop calling apps. WhatsApp is intentionally excluded.
 """
 from __future__ import annotations
 
@@ -25,7 +24,6 @@ except Exception:
 
 
 _APP_ALIASES = {
-    "WhatsApp": ("whatsapp",),
     "Microsoft Teams": ("teams", "msteams"),
     "Zoom": ("zoom",),
     "Discord": ("discord",),
