@@ -663,8 +663,9 @@ class JarvisLive:
         self.ui.get_plugin_settings = self._plugin_registry.settings_schemas  # ⚙ settings tab
         self.ui.request_say = self.plugin_say
         try:
-            from actions.whatsapp_advance import set_call_speaker
+            from actions.whatsapp_advance import set_call_speaker, set_call_audio_prepare
             set_call_speaker(self._speak_to_active_call)
+            set_call_audio_prepare(self._prepare_call_audio)
         except Exception as e:
             print(f"[CallAudio] Callback registration failed: {e}")   # plugins: mid-task speech channel
 
@@ -923,6 +924,12 @@ class JarvisLive:
         manual = self._dashboard.get_manual_url()
         return url, key, f"{url}/auto-login?key={key}", manual
 
+    def _prepare_call_audio(self):
+        loop = getattr(self, "_loop", None)
+        if loop is None or self.out_queue is None:
+            return False, "JARVIS audio session is not ready."
+        return CALL_AUDIO.begin(loop, self._enqueue_caller_audio)
+
     def _enqueue_caller_audio(self, packet) -> None:
         if not self.out_queue or not packet:
             return
@@ -931,7 +938,7 @@ class JarvisLive:
         except Exception:
             pass
 
-    def _speak_to_active_call(self, message: str, caller: str = "", end_after: bool = False):
+    def _speak_to_active_call(self, message: str, caller: str = "", end_after: bool = False, app: str = "WhatsApp"):
         message = str(message or "").strip()
         if not message:
             return False, "No call message was provided."
@@ -960,8 +967,17 @@ class JarvisLive:
 
         if end_after:
             try:
-                from actions.whatsapp_incoming_agent import get_incoming_agent
-                ended, end_error = get_incoming_agent().hang_up()
+                if str(app).casefold() == "whatsapp":
+                    from actions.whatsapp_incoming_agent import get_incoming_agent
+                    ended, end_error = get_incoming_agent().hang_up()
+                else:
+                    from actions.call_control import call_control
+                    end_result = call_control({"action": "hangup", "app": app})
+                    ended = (
+                        "failed" not in end_result.casefold()
+                        and "not found" not in end_result.casefold()
+                    )
+                    end_error = end_result
                 CALL_AUDIO.stop()
                 if not ended:
                     return False, f"Spoke to the caller, but could not end the call: {end_error}"
@@ -1015,7 +1031,7 @@ class JarvisLive:
                 accepted = call_control({"action": "accept", "app": app})
                 if "failed" not in accepted.lower() and "no matching" not in accepted.lower():
                     text = str(rule.get("message") or "").replace("{caller}", caller or "there")
-                    ok, detail = self._speak_to_active_call(text, caller or "caller", True)
+                    ok, detail = self._speak_to_active_call(text, caller or "caller", True, app)
                     record_call(app, caller, "auto-busy" if ok else "auto-busy-failed", source=source, message=text)
                     self.ui.write_log(f"SYS: {detail}")
                 else:
