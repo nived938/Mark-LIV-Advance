@@ -97,7 +97,12 @@ def set_busy_mode(enabled: bool, message: str = "") -> str:
 
 
 def auto_busy_reply(call) -> tuple[bool, str]:
-    """Decline an incoming WhatsApp call and send the configured busy message."""
+    """Accept an incoming WhatsApp call and notify the caller that Nived is busy.
+
+    Prefer JARVIS voice when the optional call-audio bridge is available.
+    When it is not available, end the call and send the configured busy message
+    as a normal WhatsApp chat message instead of reporting a false failure.
+    """
     enabled, message = get_busy_mode()
     if not enabled:
         return False, "Automatic busy reply is disabled."
@@ -108,8 +113,6 @@ def auto_busy_reply(call) -> tuple[bool, str]:
         caller = agent._best_whatsapp_chat_caller()
     caller = caller or "there"
 
-    # Accept the real call first. The JARVIS speech path is optional and
-    # depends on the virtual audio routing configured on the PC.
     ok, error = agent.accept()
     if not ok:
         return False, f"Could not accept the WhatsApp call from {caller}: {error}"
@@ -121,13 +124,31 @@ def auto_busy_reply(call) -> tuple[bool, str]:
             caller,
             True,
         )
-        if not spoken:
-            try:
-                agent.hang_up()
-            except Exception:
-                pass
-            return False, speech_error
-        return True, speech_error
+        if spoken:
+            return True, "Accepted the call, spoke the busy message, and ended the call."
+
+        try:
+            agent.hang_up()
+        except Exception:
+            pass
+
+        sent, send_error = False, ""
+        try:
+            from actions.whatsapp_advance import _send_message_desktop
+            sent, send_error = _send_message_desktop(caller, message)
+        except Exception as exc:
+            send_error = str(exc)
+
+        if sent:
+            return True, (
+                "Accepted the call, but JARVIS call audio was unavailable; "
+                "ended the call and sent the busy message in WhatsApp."
+            )
+
+        return False, (
+            f"Accepted the call but could not speak the busy message ({speech_error}) "
+            f"or send the WhatsApp fallback message ({send_error})."
+        )
     except Exception as exc:
         try:
             agent.hang_up()
