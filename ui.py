@@ -518,7 +518,11 @@ class HudCanvas(QWidget):
 
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
-        self._tmr.start(16)
+        # The core is a software QPainter scene (not a GPU canvas). Driving
+        # a full-screen gradient scene at 60 Hz wastes CPU and can make the
+        # rest of the desktop feel sticky on modest systems. Animation state
+        # still advances continuously; repainting is capped by _step().
+        self._tmr.start(20)
 
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
         """Ask the live HUD avatar to look somewhere for a moment."""
@@ -706,13 +710,14 @@ class HudCanvas(QWidget):
         else:
             _blinked = False
 
-        # Repaint throttling — advancing the animation state above is cheap at
-        # 60 Hz, but the paint is heavy. Active (speaking, audio, thinking) runs
-        # at ~30 Hz, which is the frame rate animation has used for talking
-        # characters forever and is indistinguishable here; idle drops to ~20 Hz
+        # Repaint throttling — advancing the animation state above is cheap,
+        # but the paint is heavy. Active (speaking, audio, thinking) now runs at
+        # ~25 Hz; idle drops below 17 Hz. The animation state still advances
+        # every timer tick, so the motion remains continuous without saturating
+        # a CPU core with software painting.
         # so a sleeping HUD stops pinning a CPU core. The visuals stay smooth
         # either way because the animation state keeps stepping at 60 Hz.
-        self._paint_tick = (self._paint_tick + 1) % 6
+        self._paint_tick = (self._paint_tick + 1) % 10
         active = (self.speaking or amp > 0.02
                   or self.state in ("THINKING", "PROCESSING"))
         if _blinked or (self._paint_tick % 2 == 0 if active
