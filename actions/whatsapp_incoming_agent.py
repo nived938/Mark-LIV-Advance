@@ -612,29 +612,55 @@ class WhatsAppIncomingAgent:
         return results
 
     def _best_whatsapp_chat_caller(self) -> str:
-        # The native popup can be a WebView/non-client surface with no caller
-        # text. WhatsApp normally activates the caller's chat, so use a short
-        # visible chat-header/button label as the fallback.
-        found = []
-        for window in self._find_whatsapp_windows():
+        # Prefer human-looking Text controls in the active WhatsApp window.
+        # The old "shortest string" heuristic frequently selected labels such
+        # as "Chats" or "Search". Score candidates instead.
+        candidates = []
+        reject_exact = set(_GENERIC) | {
+            "chats", "calls", "status", "updates", "settings", "new chat",
+            "communities", "archived", "search",
+        }
+        reject_contains = (
+            "type a message", "web content", "whatsapp business", "missed call",
+            "voice call", "video call", "no answer", "unread message",
+        )
+
+        windows = self._find_whatsapp_windows()
+        for window in windows:
             if not self._looks_like_whatsapp(window):
                 continue
             try:
                 for control in window.descendants():
                     text = self._safe_text(control).strip()
                     low = self._norm(text)
-                    if not text or low in _GENERIC or len(text) > 60:
+                    if not text or low in reject_exact or len(text) > 70:
                         continue
-                    if any(x in low for x in ("search", "type a message", "chat list", "whatsapp business", "web content")):
+                    if any(token in low for token in reject_contains):
                         continue
-                    if any(x in low for x in ("voice call", "video call", "missed call", "no answer")):
+                    if low.isdigit() and len(low) > 5:
                         continue
-                    found.append(text)
+                    # Prefer Text/Button controls that look like a contact name.
+                    try:
+                        control_type = str(control.element_info.control_type or "").lower()
+                    except Exception:
+                        control_type = ""
+                    score = 0
+                    if control_type == "text":
+                        score += 6
+                    if 2 <= len(text) <= 40:
+                        score += 5
+                    if any(ch.isalpha() for ch in text):
+                        score += 4
+                    if len(text.split()) <= 5:
+                        score += 2
+                    candidates.append((score, text))
             except Exception:
                 continue
-        if not found:
+
+        if not candidates:
             return ""
-        return min(found, key=len)
+        candidates.sort(key=lambda item: (-item[0], len(item[1])))
+        return candidates[0][1]
 
     def _extract_caller(self, window) -> str:
         texts = []
@@ -698,11 +724,15 @@ class WhatsAppIncomingAgent:
             caller = db_notification[0]
             sources.append("wpndb")
 
-        # Detector 1.
+        # Detector 1. If it is only a generic WhatsApp toast, retain it as a
+        # recent candidate and let UIA/visual call controls corroborate it.
         notification = self._poll_notifications()
         if notification:
             caller = caller or notification[0]
             sources.append("notification")
+
+        if not caller:
+            caller = self._best_whatsapp_chat_caller()
 
         # Detector 3a: UI Automation.
         for window in self._find_whatsapp_windows():
@@ -736,7 +766,9 @@ class WhatsAppIncomingAgent:
             accept_point, decline_point = points
             sources.append("vision")
             return IncomingCall(
-                caller=caller or self._caller_from_text(notification[1]) or "unknown caller",
+                caller=caller or self._caller_from_text(
+                    (notification[1] if notification else (db_notification[1] if db_notification else ""))
+                ) or "unknown caller",
                 window=None,
                 accept_control=None,
                 decline_control=None,
@@ -796,6 +828,53 @@ class WhatsAppIncomingAgent:
                 self._last_signature = ""
             self._event_cooldown_until = time.time() + 5.0
         return ok, error
+
+    def hang_up(self) -> tuple[bool, str]:
+        """End an already accepted WhatsApp call using an explicit Hang up/End control."""
+        win = None
+        if Desktop is not None:
+            for window in self._find_whatsapp_windows():
+                if self._looks_like_whatsapp(window):
+                    win = window
+                    break
+
+        if win is None:
+            return False, "WhatsApp call window was not found."
+
+        try:
+            controls = win.descendants(control_type="Button")
+        except Exception:
+            controls = []
+
+        hints = ("hang up", "end call", "end", "disconnect", "leave call")
+        for control in controls:
+            try:
+                name = self._norm(self._safe_text(control))
+                aid = self._norm(self._safe_id(control))
+                blob = f"{name} {aid}"
+                if any(hint in blob for hint in hints):
+                    ok, error = self._click(control)
+                    if ok:
+                        with self._lock:
+                            self._pending = None
+                        self._event_cooldown_until = time.time() + 5.0
+                    return ok, error
+            except Exception:
+                continue
+
+        # Visual fallback: the red control used by incoming-call detection is
+        # often the active-call hang-up button as well.
+        points = self._visual_call_controls()
+        if points:
+            _accept_point, decline_point = points
+            ok, error = self._click_point(decline_point)
+            if ok:
+                with self._lock:
+                    self._pending = None
+                self._event_cooldown_until = time.time() + 5.0
+            return ok, error
+
+        return False, "No Hang up/End call control was exposed by WhatsApp."
 
     def decline(self) -> tuple[bool, str]:
         call = self._fresh_or_pending()
