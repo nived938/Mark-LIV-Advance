@@ -4,6 +4,7 @@
 
     <application
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:label="JARVIS Connect"
         android:theme="@style/Theme.JarvisConnect">
         <activity
