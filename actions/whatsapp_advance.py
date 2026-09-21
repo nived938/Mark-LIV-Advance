@@ -329,12 +329,10 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
         # Route WhatsApp's communications microphone/speaker through the two
         # virtual cable pairs before answering, so call speech is real audio,
         # not a chat message typed into the composer.
-        try:
-            from core.call_audio import ROUTER
-            from actions.whatsapp_incoming_agent import get_incoming_agent as _get_agent
-            loop = getattr(__import__("main"), "JarvisLive", None)
-        except Exception:
-            ROUTER = None
+        if message and bool(speak) and callable(_CALL_AUDIO_PREPARE):
+            prepared, prepare_error = _CALL_AUDIO_PREPARE()
+            if not prepared:
+                return f"Could not prepare call audio for {caller}: {prepare_error}"
 
         ok, error = agent.accept()
         if not ok:
@@ -351,6 +349,11 @@ def whatsapp_advance(action, contact="", phone="", message="", confirmation="", 
         from actions.whatsapp_incoming_agent import get_incoming_agent
         agent = get_incoming_agent()
         ok, error = agent.hang_up()
+        try:
+            from core.call_audio import ROUTER
+            ROUTER.stop()
+        except Exception:
+            pass
         return "Ended the active WhatsApp call." if ok else f"Could not end the WhatsApp call: {error}"
 
     if action in ("decline_incoming", "reject_incoming"):
