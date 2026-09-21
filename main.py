@@ -993,17 +993,28 @@ class JarvisLive:
                 return True, "two-way", detail
 
         # WhatsApp only needs one-way speech for an automatic busy message.
-        # Use Stereo Mix/loopback when Windows exposes it. This route must be
-        # prepared BEFORE WhatsApp accepts the call so the communications mic
-        # is selected when the call starts.
+        # This supports both Stereo Mix/loopback and a normal two-endpoint
+        # virtual cable. The route is prepared BEFORE accepting the call.
+        one_way_detail = ""
         if str(app).casefold() == "whatsapp" and not CALL_AUDIO.one_way_active:
             ok_one, detail_one = CALL_AUDIO.begin_one_way()
             if ok_one:
                 return True, "one-way", detail_one
+            one_way_detail = str(detail_one or "").strip()
 
         if loop is None:
-            return False, "none", "JARVIS audio loop is not ready."
-        return False, "none", CALL_AUDIO.status()
+            return False, "none", (
+                "JARVIS audio loop is not ready."
+                + (f" One-way route also unavailable: {one_way_detail}" if one_way_detail else "")
+            )
+
+        two_way_detail = CALL_AUDIO.status()
+        if one_way_detail:
+            return False, "none", (
+                f"Two-way call audio unavailable: {two_way_detail} "
+                f"One-way call speech unavailable: {one_way_detail}"
+            )
+        return False, "none", two_way_detail
 
     def _speak_to_active_call(self, message: str, caller: str = "", end_after: bool = False, app: str = "WhatsApp"):
         message = str(message or "").strip()
@@ -1276,8 +1287,11 @@ class JarvisLive:
 
                         # Prepare call speech BEFORE accepting so Windows/WhatsApp
                         # can use the selected communications microphone from the
-                        # start of the call.
-                        self._prepare_call_speech_route("WhatsApp")
+                        # start of the call. Keep the result so a failed audio route
+                        # immediately falls through to the native chat fallback.
+                        route_ok, _route_kind, route_detail = (
+                            self._prepare_call_speech_route("WhatsApp")
+                        )
 
                         accepted, accept_error = agent.accept()
                         if not accepted:
@@ -1296,12 +1310,16 @@ class JarvisLive:
                             )
                             return
 
-                        spoken, speech_error = self._speak_to_active_call(
-                            busy_message,
-                            caller or "caller",
-                            True,
-                            "WhatsApp",
-                        )
+                        if route_ok or CALL_AUDIO.active or CALL_AUDIO.one_way_active:
+                            spoken, speech_error = self._speak_to_active_call(
+                                busy_message,
+                                caller or "caller",
+                                True,
+                                "WhatsApp",
+                            )
+                        else:
+                            spoken = False
+                            speech_error = route_detail
 
                         if spoken:
                             outcome = "auto-busy"
