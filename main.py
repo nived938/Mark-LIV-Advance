@@ -627,6 +627,8 @@ class JarvisLive:
         self._resume_handle: str | None = None
         self._turn_done_event: asyncio.Event | None = None
         self._dashboard     = None
+        self._dashboard_task = None
+        self._dashboard_commands_task = None
         self._briefing_sent    = False          # morning briefing fires once per process
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
@@ -2851,9 +2853,11 @@ class JarvisLive:
             from dashboard.server import DashboardServer
             self._dashboard = DashboardServer()
             self._dashboard.set_connect_callback(self._on_phone_connected)
-            asyncio.create_task(self._dashboard.serve())
+            self._dashboard_task = asyncio.create_task(self._dashboard.serve())
             # Runs for the whole lifetime, not just inside an active session
-            asyncio.create_task(self._process_dashboard_commands())
+            self._dashboard_commands_task = asyncio.create_task(
+                self._process_dashboard_commands()
+            )
         except Exception as e:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
@@ -3199,6 +3203,15 @@ class JarvisLive:
                 dashboard.stop()
         except Exception:
             pass
+        for task_name in ("_dashboard_commands_task", "_dashboard_task"):
+            try:
+                task = getattr(self, task_name, None)
+                if task is not None and not task.done():
+                    await asyncio.wait_for(asyncio.shield(task), timeout=3.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception:
+                pass
         try:
             await GATEWAY.stop()
         except Exception:
