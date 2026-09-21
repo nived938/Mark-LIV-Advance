@@ -439,280 +439,122 @@ def _send_by_phone(phone, message):
         return False, str(e)
 
 
-def _click_call_button(kind):
-    win = _focus_whatsapp(8)
-    if not win:
-        return False, "WhatsApp window was not found."
-    wanted = {"video", "video call", "videocall", "start video call"} if kind == "video" else {"voice call", "audio call", "start voice call", "start audio call"}
-    try:
-        for control in win.descendants():
-            try:
-                name = (control.window_text() or "").strip().lower()
-                aid = (getattr(control, "automation_id", lambda: "")() or "").strip().lower()
-                if name in wanted or aid in wanted:
-                    try:
-                        control.invoke()
-                        time.sleep(2)
-                        return True, ""
-                    except Exception:
-                        try:
-                            control.click_input()
-                            time.sleep(2)
-                            return True, ""
-                        except Exception:
-                            pass
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return False, f"WhatsApp exposed no exact {kind} call control to Windows UI Automation."
+def whatsapp_advance(
+    action,
+    contact="",
+    phone="",
+    message="",
+    confirmation="",
+    speak=True,
+    end_after=False,
+):
+    """Open WhatsApp or send messages through the native Windows app.
 
-
-_CALL_SPEAKER = None
-_CALL_AUDIO_PREPARE = None
-
-def set_call_speaker(callback) -> None:
-    global _CALL_SPEAKER
-    _CALL_SPEAKER = callback
-
-def set_call_audio_prepare(callback) -> None:
-    global _CALL_AUDIO_PREPARE
-    _CALL_AUDIO_PREPARE = callback
-
-def _speak_to_active_call(message: str, caller: str = "", end_after: bool = False):
-    callback = _CALL_SPEAKER
-    if not callable(callback):
-        return False, "JARVIS call-speech bridge is not connected."
-    try:
-        return callback(str(message or "").strip(), caller, bool(end_after))
-    except Exception as exc:
-        return False, str(exc)
-
-
-def whatsapp_advance(action, contact="", phone="", message="", confirmation="", speak=True, end_after=False):
+    WhatsApp calling is intentionally not exposed by JARVIS.
+    """
     action = (action or "").lower().strip()
 
-    if action in ("enable_busy_reply", "busy_mode_on", "auto_busy_on"):
-        from actions.whatsapp_incoming_agent import set_busy_mode
-        return set_busy_mode(True, message)
-
-    if action in ("disable_busy_reply", "busy_mode_off", "auto_busy_off"):
-        from actions.whatsapp_incoming_agent import set_busy_mode
-        return set_busy_mode(False)
-
-    if action in ("busy_status", "busy_mode_status"):
-        from actions.whatsapp_incoming_agent import get_busy_mode
-        enabled, busy_message = get_busy_mode()
+    if action in ("open", "open_whatsapp"):
         return (
-            f"Automatic WhatsApp busy reply is {'enabled' if enabled else 'disabled'}. "
-            f"Message: {busy_message}"
+            "Opened the WhatsApp desktop app."
+            if _open_desktop()
+            else "Could not open the WhatsApp desktop app."
         )
 
-    # Incoming-call controls are backed by the Windows WhatsApp native call
-    # dialog. The detector keeps the pending caller in memory until the user
-    # answers JARVIS. Never use WhatsApp Web for these actions.
-    if action in ("accept_incoming", "answer_incoming"):
-        from actions.whatsapp_incoming_agent import get_incoming_agent
-        agent = get_incoming_agent()
-        pending = agent.pending
-        caller = pending.caller if pending else (contact or "the caller")
-
-        # Prepare one-way Windows speech before accepting the call so WhatsApp
-        # can inherit Stereo Mix/loopback as its communications microphone.
-        try:
-            from core.call_audio import ROUTER
-            ROUTER.begin_one_way()
-        except Exception:
-            pass
-
-        # Accept the real call first. JARVIS call speech is an optional second step.
-        ok, error = agent.accept()
-        if not ok:
-            return f"Could not accept the incoming WhatsApp call from {caller}: {error}"
-
-        if message and bool(speak):
-            spoken, speech_error = _speak_to_active_call(
-                message,
-                caller,
-                bool(end_after),
-            )
-            if spoken:
-                return f"Accepted the WhatsApp call from {caller} and spoke the message."
-
-            # Voice injection requires the optional virtual call-audio bridge.
-            # Fall back to a normal WhatsApp message so the requested
-            # notification is still delivered without pretending speech worked.
-            try:
-                agent.hang_up()
-            except Exception:
-                pass
-
-            sent, send_error = False, ""
-            try:
-                sent, send_error = _send_message_desktop(caller, message)
-            except Exception as exc:
-                send_error = str(exc)
-
-            if sent:
-                return (
-                    f"Accepted the WhatsApp call from {caller}, but JARVIS voice "
-                    f"audio was unavailable; ended the call and sent the message in WhatsApp."
-                )
-
-            return (
-                f"Accepted the WhatsApp call from {caller}, but could not speak "
-                f"the message ({speech_error}) or send the WhatsApp fallback "
-                f"message ({send_error})."
-            )
-        return f"Accepted the WhatsApp call from {caller}."
-
-    if action in ("hang_up", "end_call", "disconnect_call"):
-        from actions.whatsapp_incoming_agent import get_incoming_agent
-        agent = get_incoming_agent()
-        ok, error = agent.hang_up()
-        try:
-            from core.call_audio import ROUTER
-            ROUTER.stop()
-        except Exception:
-            pass
-        return "Ended the active WhatsApp call." if ok else f"Could not end the WhatsApp call: {error}"
-
-    if action in ("decline_incoming", "reject_incoming"):
-        from actions.whatsapp_incoming_agent import get_incoming_agent
-        agent = get_incoming_agent()
-        caller = agent.pending.caller if agent.pending else (contact or "the caller")
-        ok, error = agent.decline()
-        if not ok:
-            return f"Could not decline the incoming WhatsApp call from {caller}: {error}"
-        if message:
-            sent, send_error = _send_message_desktop(caller, message)
-            if not sent:
-                return f"Declined the WhatsApp call from {caller}, but I could not send the follow-up message: {send_error}"
-            return f"Declined the WhatsApp call from {caller} and sent the follow-up message."
-        return f"Declined the WhatsApp call from {caller}."
-
-    if action in ("call_and_message", "message_then_call"):
-        target = contact or phone
-        if not target:
-            return "A WhatsApp contact name or phone number is required."
-        if not message:
-            return "The message to send is required."
-        # Sending the message before starting the call is the reliable desktop
-        # flow: once the native call window takes focus, the chat composer may
-        # no longer be reachable. The call still follows immediately.
-        if phone:
-            sent, send_error = _send_by_phone(phone, message)
-        else:
-            sent, send_error = _send_message_desktop(contact, message)
-        if not sent:
-            return f"Could not send the message to {target}: {send_error}"
-        if not _open_desktop():
-            return f"Sent the message to {target}, but could not open WhatsApp for the call."
-        win = _focus_whatsapp(10)
-        if not win:
-            return f"Sent the message to {target}, but the WhatsApp window was not detected for the call."
-        if contact:
-            ok, error = _click_search_and_find(contact)
-            if not ok:
-                return f"Sent the message to {target}, but could not open the chat for the call: {error}"
-        kind = "voice"
-        ok, error = _click_call_button(kind)
-        if not ok:
-            return f"Sent the message to {target}, but could not trigger the WhatsApp call: {error}"
-        return f"Sent the message to {target} and started the WhatsApp voice call."
-
-    if action in ("open", "open_whatsapp"):
-        return "Opened the WhatsApp desktop app." if _open_desktop() else "Could not open the WhatsApp desktop app."
-
-    if action in ("prepare_message", "message", "send", "send_message", "send_confirmed", "confirm_and_send"):
+    if action in (
+        "prepare_message",
+        "message",
+        "send",
+        "send_message",
+        "send_confirmed",
+        "confirm_and_send",
+    ):
         if not contact and not phone:
             return "A WhatsApp contact name or international phone number is required."
         if not message:
             return "The message text is required."
+
         if phone:
             ok, error = _send_by_phone(phone, message)
         else:
             ok, error = _send_message_desktop(contact, message)
+
         if not ok:
             return f"WhatsApp send failed: {error}"
         return f"Sent the WhatsApp message to {contact or phone}."
 
-    if action in ("call", "voice_call", "video_call"):
-        target = contact or phone
-        if not target:
-            return "A WhatsApp contact name or phone number is required."
+    if action in (
+        "call",
+        "voice_call",
+        "video_call",
+        "call_and_message",
+        "message_then_call",
+        "accept_incoming",
+        "answer_incoming",
+        "decline_incoming",
+        "reject_incoming",
+        "hang_up",
+        "end_call",
+        "disconnect_call",
+        "enable_busy_reply",
+        "busy_mode_on",
+        "auto_busy_on",
+        "disable_busy_reply",
+        "busy_mode_off",
+        "auto_busy_off",
+        "busy_status",
+        "busy_mode_status",
+    ):
+        return "WhatsApp calling features are disabled in JARVIS."
 
-        # Plain "Call <person>" gets the requested JARVIS handoff introduction.
-        # "and you don't need to speak" is represented by speak=false, which
-        # leaves the phone's normal microphone/speaker untouched.
-        call_intro = str(message or "").strip()
-        if bool(speak) and not call_intro:
-            call_intro = "Nived is back. I will transfer the conversation to Nived."
-
-        if not _open_desktop():
-            return "Could not open the WhatsApp desktop app."
-        win = _focus_whatsapp(10)
-        if not win:
-            return "WhatsApp opened, but its Windows app window was not detected."
-        if contact:
-            ok, error = _click_search_and_find(contact)
-            if not ok:
-                return f"Could not open the WhatsApp chat for {target}: {error}"
-        else:
-            try:
-                os.startfile("whatsapp://send?phone=" + _clean_phone(phone))
-                time.sleep(3)
-            except Exception as e:
-                return f"Could not open the WhatsApp contact: {e}"
-        kind = "video" if action == "video_call" else "voice"
-
-        # Start the real WhatsApp call first. JARVIS call speech is optional.
-        # Without VB-CABLE/equivalent routing the call still works normally
-        # through WhatsApp's own microphone and speakers.
-        ok, error = _click_call_button(kind)
-        if not ok:
-            return f"Opened WhatsApp to {target}, but I could not trigger the {kind} call control. {error}"
-
-        if bool(speak) and call_intro:
-            spoken, speech_error = _speak_to_active_call(
-                call_intro,
-                target,
-                False,
-            )
-            if not spoken:
-                return (
-                    f"Started the WhatsApp {kind} call to {target}, but JARVIS could not "
-                    f"speak the introduction: {speech_error}"
-                )
-            return f"Started the WhatsApp {kind} call to {target} and spoke the introduction."
-        return f"Started the WhatsApp {kind} call to {target}."
-
-    return "Unknown action. Use open_whatsapp, message, send, call, or video_call."
+    return (
+        "Unknown WhatsApp action. Use open_whatsapp or message/send "
+        "to work with WhatsApp chats."
+    )
 
 
 TOOL = {
     "name": "whatsapp_advance",
     "description": (
-        "WINDOWS WHATSAPP DESKTOP ONLY. Default tool for WhatsApp on this PC. "
-        "Use it for messaging, voice/video calls, incoming-call controls, call introductions, and automatic busy-reply settings. "
-        "Never use WhatsApp Web. Incoming calls are detected in the native Windows WhatsApp call dialog. "
-        "enable_busy_reply enables persistent automatic handling: decline every incoming WhatsApp call and "
-        "send the configured busy message to the caller; optional message sets the message. "
-        "disable_busy_reply turns the setting off; busy_status reports it. "
-        "For direct call/message actions, do not ask for confirmation."
+        "WINDOWS WHATSAPP DESKTOP ONLY. Use this tool to open the native "
+        "WhatsApp desktop app and send WhatsApp messages. "
+        "WhatsApp calling, incoming-call control, voice/video calls, "
+        "call introductions, and automatic call handling are not available."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "action": {"type": "STRING", "description": "open_whatsapp, message, send, call, video_call, accept_incoming, decline_incoming, hang_up, or call_and_message"},
-            "contact": {"type": "STRING", "description": "WhatsApp contact name"},
-            "phone": {"type": "STRING", "description": "International phone number"},
-            "message": {"type": "STRING", "description": "Message text"},
-            "confirmation": {"type": "STRING", "description": "Legacy field, not required"},
-            "speak": {"type": "BOOLEAN", "description": "For calls: true to let JARVIS speak to the caller; false to stay silent."},
-            "end_after": {"type": "BOOLEAN", "description": "For incoming-call speech: end the call after JARVIS finishes speaking."},
+            "action": {
+                "type": "STRING",
+                "description": "open_whatsapp | message | send",
+            },
+            "contact": {
+                "type": "STRING",
+                "description": "WhatsApp contact name",
+            },
+            "phone": {
+                "type": "STRING",
+                "description": "International phone number",
+            },
+            "message": {
+                "type": "STRING",
+                "description": "Message text",
+            },
+            "confirmation": {
+                "type": "STRING",
+                "description": "Legacy field, not required",
+            },
+            "speak": {
+                "type": "BOOLEAN",
+                "description": "Ignored; retained for compatibility with older commands.",
+            },
+            "end_after": {
+                "type": "BOOLEAN",
+                "description": "Ignored; retained for compatibility with older commands.",
+            },
         },
         "required": ["action"],
     },
     "handler": whatsapp_advance,
 }
+
