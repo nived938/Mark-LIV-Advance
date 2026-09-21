@@ -18,6 +18,11 @@ try:
 except Exception:
     Desktop = None
 
+try:
+    import psutil
+except Exception:
+    psutil = None
+
 
 def _clean_phone(phone):
     return "".join(c for c in (phone or "") if c.isdigit())
@@ -31,6 +36,24 @@ def _open_desktop():
         return False
 
 
+def _is_native_whatsapp_window(win) -> bool:
+    """Only allow automation against the installed WhatsApp Windows process.
+
+    A browser window can have 'WhatsApp' in its title when WhatsApp Web is open.
+    Never type into or click a browser during a native WhatsApp automation task.
+    """
+    if not psutil:
+        return False
+    try:
+        pid = int(win.process_id())
+        proc = psutil.Process(pid)
+        name = str(proc.name() or "").casefold()
+        exe = str(proc.exe() or "").casefold()
+        return "whatsapp" in name or "whatsapp" in Path(exe).name.casefold()
+    except Exception:
+        return False
+
+
 def _find_whatsapp_window(timeout=12.0):
     if not Desktop:
         return None
@@ -39,6 +62,8 @@ def _find_whatsapp_window(timeout=12.0):
         try:
             for win in Desktop(backend="uia").windows():
                 try:
+                    if not _is_native_whatsapp_window(win):
+                        continue
                     title = (win.window_text() or "").strip().lower()
                     cls = (getattr(win, "class_name", lambda: "")() or "").lower()
                     if "whatsapp" in title or "whatsapp" in cls:
