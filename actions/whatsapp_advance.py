@@ -376,10 +376,8 @@ def _send_message_desktop(contact, message):
     if not win:
         return False, "WhatsApp opened, but its desktop window was not detected."
 
-    # After a WhatsApp call ends, the caller's chat is often already the active
-    # native chat. Use it directly before performing another search. On builds
-    # that hide the header from UIA, _click_search_and_find below still verifies
-    # the selected native result before typing.
+    # Use the active native chat when it already matches the requested contact;
+    # otherwise search for the contact before typing anything.
     if _verify_native_chat_target(win, contact):
         ok, error = _type_and_send_message(win, message)
         if not ok:
@@ -444,14 +442,8 @@ def whatsapp_advance(
     contact="",
     phone="",
     message="",
-    confirmation="",
-    speak=True,
-    end_after=False,
 ):
-    """Open WhatsApp or send messages through the native Windows app.
-
-    WhatsApp calling is intentionally not exposed by JARVIS.
-    """
+    """Open WhatsApp or send a message through the native Windows app."""
     action = (action or "").lower().strip()
 
     if action in ("open", "open_whatsapp"):
@@ -483,30 +475,6 @@ def whatsapp_advance(
             return f"WhatsApp send failed: {error}"
         return f"Sent the WhatsApp message to {contact or phone}."
 
-    if action in (
-        "call",
-        "voice_call",
-        "video_call",
-        "call_and_message",
-        "message_then_call",
-        "accept_incoming",
-        "answer_incoming",
-        "decline_incoming",
-        "reject_incoming",
-        "hang_up",
-        "end_call",
-        "disconnect_call",
-        "enable_busy_reply",
-        "busy_mode_on",
-        "auto_busy_on",
-        "disable_busy_reply",
-        "busy_mode_off",
-        "auto_busy_off",
-        "busy_status",
-        "busy_mode_status",
-    ):
-        return "WhatsApp calling features are disabled in JARVIS."
-
     return (
         "Unknown WhatsApp action. Use open_whatsapp or message/send "
         "to work with WhatsApp chats."
@@ -517,9 +485,7 @@ TOOL = {
     "name": "whatsapp_advance",
     "description": (
         "WINDOWS WHATSAPP DESKTOP ONLY. Use this tool to open the native "
-        "WhatsApp desktop app and send WhatsApp messages. "
-        "WhatsApp calling, incoming-call control, voice/video calls, "
-        "call introductions, and automatic call handling are not available."
+        "WhatsApp desktop app and send WhatsApp messages."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -540,21 +506,8 @@ TOOL = {
                 "type": "STRING",
                 "description": "Message text",
             },
-            "confirmation": {
-                "type": "STRING",
-                "description": "Legacy field, not required",
-            },
-            "speak": {
-                "type": "BOOLEAN",
-                "description": "Ignored; retained for compatibility with older commands.",
-            },
-            "end_after": {
-                "type": "BOOLEAN",
-                "description": "Ignored; retained for compatibility with older commands.",
-            },
         },
         "required": ["action"],
     },
     "handler": whatsapp_advance,
 }
-
