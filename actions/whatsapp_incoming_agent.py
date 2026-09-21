@@ -806,6 +806,12 @@ class WhatsAppIncomingAgent:
                 continue
             if len(clean) > 80 or clean.isdigit():
                 continue
+            # Very short lowercase tokens are commonly notification metadata,
+            # application IDs, or UI fragments rather than a contact name.
+            # Do not let values such as 'cb' override the real caller shown by
+            # the native WhatsApp call dialog.
+            if len(clean) <= 3 and clean.islower():
+                continue
             if any(
                 word in low
                 for word in (
