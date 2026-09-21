@@ -204,8 +204,6 @@ def _click_search_and_find(contact):
 
 
 def _focus_message_box(win):
-
-def _focus_message_box(win):
     """Focus the actual chat composer, not the search field."""
     if not pyautogui:
         return False
