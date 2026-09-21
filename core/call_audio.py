@@ -38,6 +38,8 @@ class CallAudioRouter:
         self._last_error = ""
         self._speech_stop = threading.Event()
         self._speech_active = False
+        self._one_way_active = False
+        self._one_way_original_capture = ""
 
     @staticmethod
     def _devices():
@@ -184,6 +186,154 @@ class CallAudioRouter:
             pass
         self._original_roles = []
 
+    @classmethod
+    def _find_one_way_loopback(cls):
+        """Find a Windows loopback-style capture device such as Stereo Mix."""
+        if os.name != "nt" or sd is None:
+            return None
+        terms = (
+            "stereo mix",
+            "what u hear",
+            "wave out mix",
+            "loopback",
+            "speaker output",
+        )
+        for index, dev in enumerate(cls._devices()):
+            name = str(dev.get("name", "")).strip()
+            low = name.casefold()
+            if dev.get("max_input_channels", 0) and any(term in low for term in terms):
+                return index, name
+        return None
+
+    def begin_one_way(self) -> tuple[bool, str]:
+        """Route the PC's normal output into WhatsApp's communications mic.
+
+        This is a one-way fallback for TTS when the four-endpoint VB-CABLE
+        bridge is unavailable. It uses a Windows Stereo Mix/loopback input when
+        the audio driver exposes one. The original communications microphone is
+        restored by stop_one_way().
+        """
+        with self._lock:
+            if self._one_way_active:
+                return True, "One-way call speech routing is already active."
+
+            if os.name != "nt" or sd is None:
+                return False, "One-way call speech routing is available on Windows only."
+
+            loopback = self._find_one_way_loopback()
+            if loopback is None:
+                return False, (
+                    "Windows does not expose a Stereo Mix/loopback recording "
+                    "device. Enable Stereo Mix in Windows Sound settings or use "
+                    "a virtual audio cable."
+                )
+
+            try:
+                from pycaw.constants import EDataFlow, ERole
+                original = self._default_device_id(
+                    EDataFlow.eCapture, ERole.eCommunications
+                )
+                self._one_way_original_capture = original
+                target_name = loopback[1]
+                target_id = self._device_id_by_name(target_name)
+                if not target_id:
+                    return False, (
+                        "Could not resolve the Windows Stereo Mix/loopback "
+                        "device through Core Audio."
+                    )
+                if not self._set_default(target_id, [ERole.eCommunications]):
+                    return False, "Could not set Stereo Mix as the Windows communications microphone."
+
+                self._one_way_active = True
+                self._last_error = ""
+                return True, f"One-way call speech routing active via {target_name}."
+            except Exception as exc:
+                self._one_way_original_capture = ""
+                return False, str(exc)
+
+    def stop_one_way(self) -> None:
+        with self._lock:
+            if not self._one_way_active and not self._one_way_original_capture:
+                return
+            try:
+                from pycaw.constants import ERole
+                if self._one_way_original_capture:
+                    self._set_default(
+                        self._one_way_original_capture,
+                        [ERole.eCommunications],
+                    )
+            except Exception:
+                pass
+            self._one_way_original_capture = ""
+            self._one_way_active = False
+
+    def speak_one_way(self, text: str) -> tuple[bool, str]:
+        """Speak through the normal Windows output so Stereo Mix carries it to WhatsApp."""
+        text = str(text or "").strip()
+        if not text:
+            return False, "There is no call message to speak."
+        with self._lock:
+            if not self._one_way_active:
+                return False, "One-way call speech routing is not active."
+            if sd is None:
+                return False, "sounddevice is not available."
+
+        temp = Path(
+            os.environ.get("TEMP", str(Path.home()))
+        ) / f"jarvis-one-way-call-{time.time_ns()}.wav"
+        try:
+            import comtypes.client
+            import pythoncom
+            pythoncom.CoInitialize()
+            try:
+                voice = comtypes.client.CreateObject("SAPI.SpVoice")
+                stream = comtypes.client.CreateObject("SAPI.SpFileStream")
+                stream.Open(str(temp), 3, False)
+                old_output = voice.AudioOutputStream
+                voice.AudioOutputStream = stream
+                try:
+                    voice.Speak(text)
+                finally:
+                    voice.AudioOutputStream = old_output
+                    stream.Close()
+            finally:
+                pythoncom.CoUninitialize()
+
+            with wave.open(str(temp), "rb") as wf:
+                channels = wf.getnchannels()
+                width = wf.getsampwidth()
+                rate = wf.getframerate()
+                raw = wf.readframes(wf.getnframes())
+
+            if channels != 1 or width != 2:
+                return False, "Windows SAPI returned an unsupported audio format."
+
+            # device=None means the current Windows default output endpoint.
+            # Stereo Mix/loopback captures that endpoint into WhatsApp's mic.
+            stream = sd.RawOutputStream(
+                samplerate=rate,
+                channels=1,
+                dtype="int16",
+                blocksize=1024,
+                device=None,
+            )
+            stream.start()
+            try:
+                for start in range(0, len(raw), 4800):
+                    stream.write(raw[start:start + 4800])
+            finally:
+                stream.stop()
+                stream.close()
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)
+        finally:
+            try:
+                temp.unlink()
+            except Exception:
+                pass
+
+
     def begin(self, loop, enqueue):
         with self._lock:
             if self._active:
@@ -280,6 +430,7 @@ class CallAudioRouter:
                 self._last_error = str(exc)
 
     def stop(self):
+        self.stop_one_way()
         with self._lock:
             for stream in (self._caller_stream, self._output_stream):
                 try:
