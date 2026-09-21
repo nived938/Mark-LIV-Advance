@@ -1,6 +1,7 @@
 #computer_control.py
 import io
 import json
+import os
 import platform
 import re
 import string
@@ -14,6 +15,10 @@ else:
 import time
 import random
 from pathlib import Path
+
+from core.env import load_env
+
+load_env()
 
 try:
     import pyautogui
@@ -55,7 +60,7 @@ def _get_os() -> str:
 
 
 def _get_api_key() -> str:
-    return _load_config().get("gemini_api_key", "")
+    return os.getenv("GEMINI_API_KEY", "").strip() or _load_config().get("gemini_api_key", "")
 
 _SAFE_SCREENSHOT_ROOTS = (
     Path.home(),
@@ -516,7 +521,7 @@ def computer_control(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "computer_control",
-    "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen.",
+    "description": "LOW-LEVEL GUI PRIMITIVES only. For operating an application or doing a multi-step Windows GUI task, use computer_use instead. computer_use captures the real screen, sends it to Gemini, derives visible click coordinates, keeps the target app focused, re-observes after actions, and verifies completion. Use computer_control directly only when the exact single action/coordinates are already known or when computer_use explicitly asks for a primitive.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

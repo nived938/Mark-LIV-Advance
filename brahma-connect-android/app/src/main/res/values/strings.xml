@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">JARVIS Connect</string>
+    <string name="accessibility_description">Lets JARVIS control this phone with explicit remote commands.</string>
+</resources>

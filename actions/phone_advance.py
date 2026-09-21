@@ -254,7 +254,7 @@ def _tap_whatsapp_call_control(xml: str, video: bool) -> bool:
 def _whatsapp_call(target: str, video: bool = False) -> str:
     number = target if re.search(r"\d", target) else _resolve_contact(target)
     if not number:
-        return f"I could not find a phone contact named \${target}."
+        return f"I could not find a phone contact named ${target}."
     number = _normalize_number(number)
     if not number.startswith("+"):
         return "Save the WhatsApp contact with the international country code first."
@@ -264,33 +264,33 @@ def _whatsapp_call(target: str, video: bool = False) -> str:
     uri = f"https://wa.me/{number.lstrip('+')}"
     ok, _, err = _d(["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", uri, "-p", "com.whatsapp"], timeout=20)
     if not ok:
-        return f"Could not open the WhatsApp contact: \${err}"
+        return f"Could not open the WhatsApp contact: ${err}"
     time.sleep(2.0)
     for _ in range(3):
         ok, _, _ = _d(["shell", "uiautomator", "dump", "/sdcard/window.xml"], timeout=15)
         ok2, xml, _ = _d(["shell", "cat", "/sdcard/window.xml"], timeout=10)
         if ok and ok2 and _tap_whatsapp_call_control(xml, video):
-            return f"WhatsApp {'video ' if video else ''}call started with \${target}."
+            return f"WhatsApp {'video ' if video else ''}call started with ${target}."
         time.sleep(0.8)
-    return f"WhatsApp opened \${target}'s chat, but the {'video' if video else 'voice'} call control could not be located."
+    return f"WhatsApp opened ${target}'s chat, but the {'video' if video else 'voice'} call control could not be located."
 
 
 def _phone_camera(action: str) -> str:
     action = action.lower().strip()
     if action == "open":
         ok, out, err = _d(["shell", "am", "start", "-a", "android.media.action.IMAGE_CAPTURE"], timeout=20)
-        return "Phone camera opened." if ok else f"Could not open the phone camera: \${err or out}"
+        return "Phone camera opened." if ok else f"Could not open the phone camera: {err or out}"
     if action == "close":
         ok, _, err = _d(["shell", "input", "keyevent", "4"], timeout=8)
-        return "Phone camera closed." if ok else f"Could not close the phone camera: \${err}"
+        return "Phone camera closed." if ok else f"Could not close the phone camera: ${err}"
     if action == "take":
         ok, _, err = _d(["shell", "am", "start", "-a", "android.media.action.IMAGE_CAPTURE"], timeout=20)
         if not ok:
-            return f"Could not open the phone camera: \${err}"
+            return f"Could not open the phone camera: ${err}"
         time.sleep(2.0)
         ok, _, err = _d(["shell", "input", "keyevent", "27"], timeout=8)
         if not ok:
-            return f"Phone camera opened, but the shutter could not be triggered: \${err}"
+            return f"Phone camera opened, but the shutter could not be triggered: ${err}"
         time.sleep(2.0)
         ok, out, err = _d(["shell", "sh", "-c", "ls -t /sdcard/DCIM/Camera/* 2>/dev/null | head -n 1"], timeout=15)
         if ok and out:

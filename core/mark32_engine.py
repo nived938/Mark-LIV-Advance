@@ -189,6 +189,25 @@ class TaskPlanner:
         if not g:
             return steps
         low = g.lower()
+        # GUI/application goals must be executed by the computer-use agent as one
+        # continuous task. Do not split them into "open" + "file" steps: that
+        # loses the application context and previously caused Mark 32 to create
+        # files with PowerShell while claiming it operated VS Code.
+        gui_words = ("click", "type", "double-click", "right-click", "in vscode",
+                     "in vs code", "in visual studio code", "inside vscode",
+                     "inside vs code", "use the app", "use the application",
+                     "create in", "edit in", "write in")
+        gui_multi = any(x in low for x in gui_words) or (
+            any(x in low for x in ("open", "launch", "start")) and
+            any(x in low for x in ("create", "write", "edit", "make", "inside", "then"))
+        )
+        if gui_multi:
+            steps.append({
+                "tool": "computer_use",
+                "description": "Operate the requested Windows application through the visible GUI and verify the result",
+            })
+            return steps
+
         if any(x in low for x in ("find", "search", "locate")):
             steps.append({"tool": "deep_search", "description": "Find the requested resource"})
         if any(x in low for x in ("open", "launch", "start")):
@@ -244,6 +263,7 @@ class ToolRouter:
     execution path; these names are also useful to the autonomous agent."""
 
     ROUTES = {
+        "computer_use": ("computer_use",),
         "file": ("file_search_advance", "file_manage_advance"),
         "terminal": ("terminal_advance", "terminal"),
         "browser": ("browser_advance", "browser_control"),
@@ -263,6 +283,8 @@ class ToolRouter:
         for key, names in self.ROUTES.items():
             if key in low:
                 return list(names)
+        if any(x in low for x in ("computer", "desktop", "gui", "ui", "click", "type", "operate", "create in vscode", "use the app", "use the application")):
+            return list(self.ROUTES["computer_use"])
         if any(x in low for x in ("file", "folder")):
             return list(self.ROUTES["file"])
         if any(x in low for x in ("code", "program", "build")):
@@ -705,7 +727,16 @@ class Mark32Engine:
                 self.cancel.check()
                 desc = step["description"]
                 tool = step["tool"]
-                if tool == "deep_search":
+                if tool == "computer_use":
+                    # Import lazily so the Mark 32 engine remains dependency-light
+                    # and avoids an actions -> core import cycle at startup.
+                    from actions.computer_use import computer_use
+                    result = computer_use({
+                        "goal": goal,
+                        "max_steps": 20,
+                        "verify_every": 2,
+                    })
+                elif tool == "deep_search":
                     # Search for the actual resource name, not the whole natural-language goal.
                     # This makes "find my Jarvis-Mark-32 folder and verify it exists" deterministic.
                     query = goal

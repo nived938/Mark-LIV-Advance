@@ -66,10 +66,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 import threading
 from pathlib import Path
+
+from core.env import load_env
 
 if getattr(sys, "frozen", False):
     _BASE = Path(sys.executable).parent
@@ -77,6 +80,8 @@ else:
     _BASE = Path(__file__).resolve().parent.parent
 
 _KEY_FILE = _BASE / "config" / "api_keys.json"
+
+load_env()
 
 # Ladders, tried left to right. Change a model HERE and the whole app follows.
 FAST = "fast"      # short classification, extraction, one-line decisions
@@ -114,17 +119,17 @@ SEARCH = "search"  # grounded search — REST only, see below
 LIVE = "live"
 
 _LADDERS = {
-    FAST: (LIVE, "gemini-2.5-flash-lite", "gemini-2.5-flash"),
-    SMART: (LIVE, "gemini-2.5-flash", "gemini-2.5-flash-lite"),
-    # Grounded search needs response.candidates[...].grounding_metadata, which a
-    # Live turn does not produce. REST only, and it says so rather than silently
-    # returning an answer with no sources behind it.
-    SEARCH: ("gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite"),
+    # Current stable Gemini 3.x models. The older 2.5 REST IDs in the user's
+    # logs returned 404, so keep those IDs out of the default ladder.
+    FAST: ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", LIVE),
+    SMART: ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", LIVE),
+    # Grounded search needs REST responses with grounding metadata.
+    SEARCH: ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"),
 }
 
 # The Live model to use for one-shot calls. main.py owns the real one; this is
 # only the fallback for when this module is imported without it (tests).
-_LIVE_FALLBACK = "models/gemini-3.1-flash-live-preview"
+_LIVE_FALLBACK = "models/gemini-3.8-live"
 
 # How many one-shot Live sessions may exist at once.
 #
@@ -192,15 +197,30 @@ def _cooling(model: str) -> bool:
         return False
 
 
+def _cool_transient(model: str, seconds: int = 45) -> None:
+    """Temporarily skip a model after a transient 503/504 service failure."""
+    with _cool_lock:
+        _cooldown[model] = max(
+            _cooldown.get(model, 0.0),
+            time.monotonic() + max(15, int(seconds)),
+        )
+
+
 def api_key(refresh: bool = False) -> str:
-    """The Gemini key from config/api_keys.json. Cached; never raises."""
+    """Read Gemini credentials from .env first, then legacy config JSON."""
     global _cached_key
     with _key_lock:
         if _cached_key is not None and not refresh:
             return _cached_key
+
+        env_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if env_key:
+            _cached_key = env_key
+            return _cached_key
+
         try:
             data = json.loads(_KEY_FILE.read_text(encoding="utf-8"))
-            _cached_key = str(data.get("gemini_api_key") or "")
+            _cached_key = str(data.get("gemini_api_key") or "").strip()
         except Exception:
             _cached_key = ""
         return _cached_key
@@ -399,13 +419,34 @@ def call(contents, tier: str = FAST, config=None,
             kwargs = {"model": model, "contents": contents}
             if config is not None:
                 kwargs["config"] = config
+            else:
+                kwargs["config"] = {
+                    "automatic_function_calling": {
+                        "disable": True,
+                    }
+                }
             return cl.models.generate_content(**kwargs)
         except Exception as e:
             msg = str(e)
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+            msg_low = msg.casefold()
+            if "429" in msg or "resource_exhausted" in msg_low:
                 _cool(model)
-                print(f"[Gemini] {model}: out of quota — skipping it for "
-                      f"{_COOLDOWN_SECONDS // 60} minutes")
+                print(
+                    f"[Gemini] {model}: out of quota — skipping it for "
+                    f"{_COOLDOWN_SECONDS // 60} minutes"
+                )
+            elif (
+                "503" in msg
+                or "504" in msg
+                or "unavailable" in msg_low
+                or "deadline_exceeded" in msg_low
+            ):
+                seconds = 60 if ("504" in msg or "deadline_exceeded" in msg_low) else 45
+                _cool_transient(model, seconds)
+                print(
+                    f"[Gemini] {model}: temporary service failure "
+                    f"({type(e).__name__}) — trying the next model"
+                )
             else:
                 print(f"[Gemini] {model}: {type(e).__name__}: {msg[:140]}")
     return None

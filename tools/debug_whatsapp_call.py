@@ -251,4 +251,3 @@ print("  UIA CALL CANDIDATE")
 print("  WIN32 CALL CANDIDATE")
 print("  WIN32 WHATSAPP WINDOW")
 print("You do NOT need to paste PROCESS MATCH sections.")
-"

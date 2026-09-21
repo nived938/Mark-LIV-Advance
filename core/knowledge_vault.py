@@ -55,16 +55,14 @@ def _extract(path: Path) -> str:
             with zipfile.ZipFile(path) as z:
                 xml = z.read("word/document.xml")
             root = ElementTree.fromstring(xml)
-            return "
-".join(t.text or "" for t in root.iter() if t.tag.endswith("}t"))
+            return "\n".join(t.text or "" for t in root.iter() if t.tag.endswith("}t"))
         except Exception:
             return ""
 
     if path.suffix.lower() == ".pdf":
         try:
             from pypdf import PdfReader
-            return "
-".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
+            return "\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
         except Exception:
             return ""
 

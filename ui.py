@@ -4,6 +4,10 @@ import json
 import math
 import os
 import platform
+
+from core.env import load_env
+
+load_env()
 import random
 import subprocess
 import sys
@@ -514,7 +518,11 @@ class HudCanvas(QWidget):
 
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
-        self._tmr.start(16)
+        # The core is a software QPainter scene (not a GPU canvas). Driving
+        # a full-screen gradient scene at 60 Hz wastes CPU and can make the
+        # rest of the desktop feel sticky on modest systems. Animation state
+        # still advances continuously; repainting is capped by _step().
+        self._tmr.start(20)
 
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
         """Ask the live HUD avatar to look somewhere for a moment."""
@@ -702,13 +710,14 @@ class HudCanvas(QWidget):
         else:
             _blinked = False
 
-        # Repaint throttling — advancing the animation state above is cheap at
-        # 60 Hz, but the paint is heavy. Active (speaking, audio, thinking) runs
-        # at ~30 Hz, which is the frame rate animation has used for talking
-        # characters forever and is indistinguishable here; idle drops to ~20 Hz
+        # Repaint throttling — advancing the animation state above is cheap,
+        # but the paint is heavy. Active (speaking, audio, thinking) now runs at
+        # ~25 Hz; idle drops below 17 Hz. The animation state still advances
+        # every timer tick, so the motion remains continuous without saturating
+        # a CPU core with software painting.
         # so a sleeping HUD stops pinning a CPU core. The visuals stay smooth
         # either way because the animation state keeps stepping at 60 Hz.
-        self._paint_tick = (self._paint_tick + 1) % 6
+        self._paint_tick = (self._paint_tick + 1) % 10
         active = (self.speaking or amp > 0.02
                   or self.state in ("THINKING", "PROCESSING"))
         if _blinked or (self._paint_tick % 2 == 0 if active
@@ -3187,7 +3196,6 @@ class MainWindow(QMainWindow):
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
         self._cam_control_sig.connect(self._apply_camera_control)
-        self._clipboard_sig.connect(self._show_clipboard_panel)
         self._wake_dl_sig.connect(self._on_wake_install_done)
         self._quiz_sig.connect(self._show_quiz)
         self._quiz_hide_sig.connect(self._hide_quiz)
@@ -3203,10 +3211,9 @@ class MainWindow(QMainWindow):
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
 
-        # Clipboard panel (child of central widget, bottom-center)
-        self._clipboard_panel = ClipboardPanel(self.centralWidget())
-        self._clipboard_panel.action_requested.connect(self._on_clipboard_action)
-        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
+        # Automatic clipboard monitoring is disabled. Copying text no longer
+        # feeds clipboard contents into JARVIS or triggers any spoken response.
+        # Explicit clipboard commands remain available when requested by the user.
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
@@ -3231,7 +3238,21 @@ class MainWindow(QMainWindow):
         try:
             cb = getattr(self, "on_close", None)
             if cb is not None:
-                cb()
+                result = cb()
+
+                # Some shutdown callbacks, such as MobileGateway.stop(),
+                # are asynchronous coroutines. Schedule/run them correctly
+                # instead of leaving the coroutine un-awaited.
+                import inspect
+                if inspect.isawaitable(result):
+                    import asyncio
+
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(result)
+                    except RuntimeError:
+                        asyncio.run(result)
+
         except Exception as exc:
             print(f"[UI] Close cleanup request failed: {exc}")
         event.accept()
@@ -5476,32 +5497,8 @@ class MainWindow(QMainWindow):
         self._plugin_settings_overlay = ov   # keep a reference so it isn't GC'd
 
     # ── Clipboard intelligence ───────────────────────────────────────────────────
-
-    def _on_clipboard_changed(self):
-        try:
-            text = QApplication.clipboard().text().strip()
-            if len(text) >= 10:
-                self._clipboard_sig.emit(text)
-        except Exception:
-            pass
-
-    def _show_clipboard_panel(self, text: str):
-        self._clipboard_panel.show_clipboard(text)
-        self._position_clipboard_panel()
-
-    def _position_clipboard_panel(self):
-        cw = self.centralWidget()
-        pw = ClipboardPanel._W
-        ph = self._clipboard_panel.sizeHint().height() or ClipboardPanel._H
-        x = (cw.width() - pw) // 2
-        y = cw.height() - ph - 6
-        self._clipboard_panel.setGeometry(x, y, pw, ph)
-        self._clipboard_panel.raise_()
-
-    def _on_clipboard_action(self, cmd: str):
-        if self.on_text_command:
-            threading.Thread(target=self.on_text_command, args=(cmd,), daemon=True).start()
-
+    # Automatic clipboard detection was removed. The OS clipboard is used only
+    # when an explicit clipboard action is requested by the user.
     # ────────────────────────────────────────────────────────────────────────────
 
     def _do_interrupt(self):
@@ -5551,7 +5548,12 @@ class MainWindow(QMainWindow):
         self.hud.speaking = (state == "SPEAKING")
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists(): return False
+        env_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if env_key:
+            return True
+
+        if not API_FILE.exists():
+            return False
         try:
             d = json.loads(API_FILE.read_text(encoding="utf-8"))
             return bool(d.get("gemini_api_key")) and bool(d.get("os_system"))

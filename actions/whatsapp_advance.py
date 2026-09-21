@@ -2,6 +2,7 @@ import os
 import time
 from pathlib import Path
 from urllib.parse import quote
+from difflib import SequenceMatcher
 
 try:
     import pyautogui
@@ -18,6 +19,11 @@ try:
 except Exception:
     Desktop = None
 
+try:
+    import psutil
+except Exception:
+    psutil = None
+
 
 def _clean_phone(phone):
     return "".join(c for c in (phone or "") if c.isdigit())
@@ -31,6 +37,24 @@ def _open_desktop():
         return False
 
 
+def _is_native_whatsapp_window(win) -> bool:
+    """Only allow automation against the installed WhatsApp Windows process.
+
+    A browser window can have 'WhatsApp' in its title when WhatsApp Web is open.
+    Never type into or click a browser during a native WhatsApp automation task.
+    """
+    if not psutil:
+        return False
+    try:
+        pid = int(win.process_id())
+        proc = psutil.Process(pid)
+        name = str(proc.name() or "").casefold()
+        exe = str(proc.exe() or "").casefold()
+        return "whatsapp" in name or "whatsapp" in Path(exe).name.casefold()
+    except Exception:
+        return False
+
+
 def _find_whatsapp_window(timeout=12.0):
     if not Desktop:
         return None
@@ -39,9 +63,19 @@ def _find_whatsapp_window(timeout=12.0):
         try:
             for win in Desktop(backend="uia").windows():
                 try:
+                    if not _is_native_whatsapp_window(win):
+                        continue
                     title = (win.window_text() or "").strip().lower()
                     cls = (getattr(win, "class_name", lambda: "")() or "").lower()
                     if "whatsapp" in title or "whatsapp" in cls:
+                        return win
+
+                    # After a call ends, the native WhatsApp window can change
+                    # its title/class and expose neither the app name nor the
+                    # chat name through UIA. The process check above is still
+                    # authoritative, so a visible top-level WhatsApp process
+                    # window is also a valid target.
+                    if _is_native_whatsapp_window(win):
                         return win
                 except Exception:
                     continue
@@ -84,52 +118,134 @@ def _set_edit_text(control, text):
         return False
 
 
-def _click_search_and_find(contact):
-    win = _focus_whatsapp(8)
-    if not win:
-        return False, "WhatsApp desktop window did not appear."
+def _norm_contact(value):
+    return " ".join(str(value or "").casefold().split()).strip()
 
-    for _ in range(8):
+
+def _contact_match_score(candidate: str, target: str) -> int:
+    candidate_n = _norm_contact(candidate)
+    target_n = _norm_contact(target)
+    if not candidate_n or not target_n:
+        return -1
+    if candidate_n == target_n:
+        return 100
+    if candidate_n.startswith(target_n + " "):
+        return 92
+    if target_n.startswith(candidate_n + " "):
+        return 88
+    target_tokens = set(target_n.split())
+    candidate_tokens = set(candidate_n.split())
+    overlap = len(target_tokens & candidate_tokens)
+    ratio = SequenceMatcher(None, candidate_n, target_n).ratio()
+    if overlap:
+        return 70 + min(15, overlap * 5) + int(ratio * 10)
+    if ratio >= 0.72:
+        return 60 + int(ratio * 20)
+    return -1
+
+
+def _click_search_and_find(contact):
+    """Open a contact in the native WhatsApp app without browser/global-keyboard fallback."""
+    win = _focus_whatsapp(8)
+    if not win or not _is_native_whatsapp_window(win):
+        return False, "The native WhatsApp desktop window was not found."
+
+    target = str(contact or "").strip()
+    if not target:
+        return False, "No WhatsApp contact was provided."
+
+    search = None
+    try:
+        for edit in _get_edits(win):
+            text_value = (edit.window_text() or "").casefold()
+            aid = (getattr(edit, "automation_id", lambda: "")() or "").casefold()
+            if "search" in text_value or "search" in aid:
+                search = edit
+                break
+    except Exception:
+        search = None
+
+    if search is None:
+        return False, "WhatsApp's native search box was not exposed to Windows UI Automation."
+
+    if not _set_edit_text(search, target):
+        return False, "Could not enter the contact into WhatsApp's native search box."
+
+    time.sleep(1.2)
+
+    candidates = []
+    try:
+        controls = win.descendants()
+    except Exception:
+        controls = []
+
+    for control in controls:
         try:
-            edits = _get_edits(win)
-            search = None
-            for edit in edits:
+            control_type = str(control.element_info.control_type or "").casefold()
+            if control_type not in {"listitem", "treeitem", "dataitem", "text", "button"}:
+                continue
+            text_value = (control.window_text() or "").strip()
+            if not text_value:
+                continue
+            score = _contact_match_score(text_value, target)
+            if score >= 70:
+                candidates.append((score, text_value, control))
+        except Exception:
+            continue
+
+    # Prefer actual row/item controls over a Text/Button child inside some
+    # unrelated part of the chat. A clicked list item is our native proof that
+    # the WhatsApp search result matched the requested contact.
+    type_bonus = {
+        "listitem": 30,
+        "treeitem": 28,
+        "dataitem": 26,
+        "button": 8,
+        "text": 0,
+    }
+    candidates.sort(
+        key=lambda item: (
+            -(item[0] + type_bonus.get(
+                str(item[2].element_info.control_type or "").casefold(),
+                0,
+            )),
+            -item[0],
+            len(item[1]),
+        )
+    )
+
+    for _, selected_name, control in candidates:
+        control_type = str(
+            control.element_info.control_type or ""
+        ).casefold()
+        try:
+            try:
+                control.invoke()
+            except Exception:
+                control.click_input()
+
+            # On some WhatsApp builds invoke() only highlights the result.
+            # If the native search box still contains the query, press Enter
+            # through that same UIA control rather than sending a global key to
+            # whatever window happens to be active.
+            time.sleep(0.45)
+            try:
+                search_text = (search.window_text() or "").strip()
+            except Exception:
+                search_text = ""
+            if _norm_contact(search_text) == _norm_contact(target):
                 try:
-                    text = (edit.window_text() or "").lower()
-                    aid = (getattr(edit, "automation_id", lambda: "")() or "").lower()
-                    if "search" in text or "search" in aid:
-                        search = edit
-                        break
+                    search.set_focus()
+                    search.type_keys("{ENTER}")
                 except Exception:
                     pass
-            if search is None and edits:
-                search = edits[0]
-            if search and _set_edit_text(search, contact):
-                time.sleep(1.5)
-                if pyautogui:
-                    pyautogui.press("down")
-                    pyautogui.press("enter")
-                time.sleep(1.8)
-                return True, ""
-        except Exception:
-            pass
-        time.sleep(0.6)
 
-    if pyautogui:
-        try:
-            win.set_focus()
-            pyautogui.hotkey("ctrl", "f")
-            time.sleep(0.5)
-            pyautogui.hotkey("ctrl", "a")
-            pyautogui.write(contact, interval=0.04)
-            time.sleep(1.5)
-            pyautogui.press("down")
-            pyautogui.press("enter")
-            time.sleep(1.8)
-            return True, ""
-        except Exception as e:
-            return False, str(e)
-    return False, "Could not access the WhatsApp search box."
+            time.sleep(1.2)
+            return True, selected_name
+        except Exception:
+            continue
+
+    return False, f"No native WhatsApp search result matched '{target}'."
 
 
 def _focus_message_box(win):
@@ -207,6 +323,49 @@ def _type_and_send_message(win, message):
         return False, str(e)
 
 
+def _verify_native_chat_target(win, contact: str) -> bool:
+    """Verify the native WhatsApp chat actually shows the requested contact."""
+    target = " ".join(str(contact or "").casefold().split()).strip()
+    if not target:
+        return False
+
+    try:
+        controls = win.descendants()
+    except Exception:
+        controls = []
+
+    candidates = []
+    try:
+        title = (win.window_text() or "").strip()
+        if title:
+            candidates.append(title)
+    except Exception:
+        pass
+
+    for control in controls:
+        try:
+            control_type = str(
+                control.element_info.control_type or ""
+            ).casefold()
+            if control_type not in {"text", "button", "listitem"}:
+                continue
+            text = (control.window_text() or "").strip()
+            if text:
+                candidates.append(text)
+        except Exception:
+            continue
+
+    best_score = -1
+    for value in candidates:
+        score = _contact_match_score(value, contact)
+        if score > best_score:
+            best_score = score
+
+    # A short contact name such as "Malu" is allowed to match the actual
+    # WhatsApp display name "Malu Chechi", but an unrelated chat is not.
+    return best_score >= 70
+
+
 def _send_message_desktop(contact, message):
     if not pyautogui:
         return False, "pyautogui is not installed."
@@ -217,13 +376,43 @@ def _send_message_desktop(contact, message):
     if not win:
         return False, "WhatsApp opened, but its desktop window was not detected."
 
-    ok, error = _click_search_and_find(contact)
+    # Use the active native chat when it already matches the requested contact;
+    # otherwise search for the contact before typing anything.
+    if _verify_native_chat_target(win, contact):
+        ok, error = _type_and_send_message(win, message)
+        if not ok:
+            return False, error
+        return True, ""
+
+    ok, selected_name_or_error = _click_search_and_find(contact)
     if not ok:
-        return False, error
+        return False, selected_name_or_error
+
+    selected_name = str(selected_name_or_error or "").strip()
 
     win = _focus_whatsapp(5)
     if not win:
         return False, "WhatsApp chat opened, but its window disappeared."
+
+    # Some current WhatsApp builds do not expose the selected chat header to
+    # UI Automation, so a second UIA scan can falsely report failure even though
+    # the native search row that was just clicked matched the contact. Only skip
+    # the second verification when the clicked native result itself is a strong
+    # contact match; never bypass the process/native-window check.
+    selected_score = _contact_match_score(selected_name, contact)
+    if selected_score < 70:
+        return (
+            False,
+            f"WhatsApp selected '{selected_name or 'an unknown result'}', "
+            f"which does not match '{contact}'. No message was typed or sent."
+        )
+
+    if not _verify_native_chat_target(win, contact) and selected_score < 88:
+        return (
+            False,
+            f"Could not verify the native WhatsApp chat for '{contact}'. "
+            "No message was typed or sent."
+        )
 
     ok, error = _type_and_send_message(win, message)
     if not ok:
@@ -248,164 +437,75 @@ def _send_by_phone(phone, message):
         return False, str(e)
 
 
-def _click_call_button(kind):
-    win = _focus_whatsapp(8)
-    if not win:
-        return False, "WhatsApp window was not found."
-    wanted = {"video", "video call", "videocall", "start video call"} if kind == "video" else {"voice call", "audio call", "start voice call", "start audio call"}
-    try:
-        for control in win.descendants():
-            try:
-                name = (control.window_text() or "").strip().lower()
-                aid = (getattr(control, "automation_id", lambda: "")() or "").strip().lower()
-                if name in wanted or aid in wanted:
-                    try:
-                        control.invoke()
-                        time.sleep(2)
-                        return True, ""
-                    except Exception:
-                        try:
-                            control.click_input()
-                            time.sleep(2)
-                            return True, ""
-                        except Exception:
-                            pass
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return False, f"WhatsApp exposed no exact {kind} call control to Windows UI Automation."
-
-
-def whatsapp_advance(action, contact="", phone="", message="", confirmation=""):
+def whatsapp_advance(
+    action,
+    contact="",
+    phone="",
+    message="",
+):
+    """Open WhatsApp or send a message through the native Windows app."""
     action = (action or "").lower().strip()
 
-    # Incoming-call controls are backed by the Windows WhatsApp native call
-    # dialog. The detector keeps the pending caller in memory until the user
-    # answers JARVIS. Never use WhatsApp Web for these actions.
-    if action in ("accept_incoming", "answer_incoming"):
-        from actions.whatsapp_incoming_agent import get_incoming_agent
-        agent = get_incoming_agent()
-        caller = agent.pending.caller if agent.pending else (contact or "the caller")
-        ok, error = agent.accept()
-        if not ok:
-            return f"Could not accept the incoming WhatsApp call from {caller}: {error}"
-        if message:
-            time.sleep(1.0)
-            sent, send_error = _send_message_desktop(caller, message)
-            if not sent:
-                return f"Accepted the WhatsApp call from {caller}, but I could not send the message: {send_error}"
-            return f"Accepted the WhatsApp call from {caller} and sent the message."
-        return f"Accepted the WhatsApp call from {caller}."
-
-    if action in ("decline_incoming", "reject_incoming"):
-        from actions.whatsapp_incoming_agent import get_incoming_agent
-        agent = get_incoming_agent()
-        caller = agent.pending.caller if agent.pending else (contact or "the caller")
-        ok, error = agent.decline()
-        if not ok:
-            return f"Could not decline the incoming WhatsApp call from {caller}: {error}"
-        if message:
-            sent, send_error = _send_message_desktop(caller, message)
-            if not sent:
-                return f"Declined the WhatsApp call from {caller}, but I could not send the follow-up message: {send_error}"
-            return f"Declined the WhatsApp call from {caller} and sent the follow-up message."
-        return f"Declined the WhatsApp call from {caller}."
-
-    if action in ("call_and_message", "message_then_call"):
-        target = contact or phone
-        if not target:
-            return "A WhatsApp contact name or phone number is required."
-        if not message:
-            return "The message to send is required."
-        # Sending the message before starting the call is the reliable desktop
-        # flow: once the native call window takes focus, the chat composer may
-        # no longer be reachable. The call still follows immediately.
-        if phone:
-            sent, send_error = _send_by_phone(phone, message)
-        else:
-            sent, send_error = _send_message_desktop(contact, message)
-        if not sent:
-            return f"Could not send the message to {target}: {send_error}"
-        if not _open_desktop():
-            return f"Sent the message to {target}, but could not open WhatsApp for the call."
-        win = _focus_whatsapp(10)
-        if not win:
-            return f"Sent the message to {target}, but the WhatsApp window was not detected for the call."
-        if contact:
-            ok, error = _click_search_and_find(contact)
-            if not ok:
-                return f"Sent the message to {target}, but could not open the chat for the call: {error}"
-        kind = "voice"
-        ok, error = _click_call_button(kind)
-        if not ok:
-            return f"Sent the message to {target}, but could not trigger the WhatsApp call: {error}"
-        return f"Sent the message to {target} and started the WhatsApp voice call."
-
     if action in ("open", "open_whatsapp"):
-        return "Opened the WhatsApp desktop app." if _open_desktop() else "Could not open the WhatsApp desktop app."
+        return (
+            "Opened the WhatsApp desktop app."
+            if _open_desktop()
+            else "Could not open the WhatsApp desktop app."
+        )
 
-    if action in ("prepare_message", "message", "send", "send_message", "send_confirmed", "confirm_and_send"):
+    if action in (
+        "prepare_message",
+        "message",
+        "send",
+        "send_message",
+        "send_confirmed",
+        "confirm_and_send",
+    ):
         if not contact and not phone:
             return "A WhatsApp contact name or international phone number is required."
         if not message:
             return "The message text is required."
+
         if phone:
             ok, error = _send_by_phone(phone, message)
         else:
             ok, error = _send_message_desktop(contact, message)
+
         if not ok:
             return f"WhatsApp send failed: {error}"
         return f"Sent the WhatsApp message to {contact or phone}."
 
-    if action in ("call", "voice_call", "video_call"):
-        target = contact or phone
-        if not target:
-            return "A WhatsApp contact name or phone number is required."
-        if not _open_desktop():
-            return "Could not open the WhatsApp desktop app."
-        win = _focus_whatsapp(10)
-        if not win:
-            return "WhatsApp opened, but its Windows app window was not detected."
-        if contact:
-            ok, error = _click_search_and_find(contact)
-            if not ok:
-                return f"Could not open the WhatsApp chat for {target}: {error}"
-        else:
-            try:
-                os.startfile("whatsapp://send?phone=" + _clean_phone(phone))
-                time.sleep(3)
-            except Exception as e:
-                return f"Could not open the WhatsApp contact: {e}"
-        kind = "video" if action == "video_call" else "voice"
-        ok, error = _click_call_button(kind)
-        if ok:
-            return f"Triggered the WhatsApp {kind} call control for {target}."
-        return f"Opened WhatsApp to {target}, but I could not trigger the {kind} call control. {error}"
-
-    return "Unknown action. Use open_whatsapp, message, send, call, or video_call."
+    return (
+        "Unknown WhatsApp action. Use open_whatsapp or message/send "
+        "to work with WhatsApp chats."
+    )
 
 
 TOOL = {
     "name": "whatsapp_advance",
     "description": (
-        "WINDOWS WHATSAPP DESKTOP ONLY. This is the default WhatsApp tool for untagged commands "
-        "about WhatsApp on this PC. Use it for 'message achan in whatsapp', 'call achan in "
-        "whatsapp', and similar commands unless the user explicitly says @phone/Android phone. "
-        "Never use phone_advance for those normal PC WhatsApp commands. Never use WhatsApp Web. "
-        "For messages, find the contact, open the chat, focus the actual message composer, "
-        "paste the message, and press Enter automatically. Do not ask for confirmation. "
-        "Do not report success unless the message input was focused and Enter was pressed. "
-        "Calls and video calls should use Windows UI Automation automatically. Incoming calls are detected in the native Windows WhatsApp call dialog; accept_incoming and decline_incoming control the pending call. For decline_incoming, include message for a follow-up text. For accept_incoming, include message to send after answering. call_and_message sends the requested text and then starts the voice call because the native call window can take focus."
+        "WINDOWS WHATSAPP DESKTOP ONLY. Use this tool to open the native "
+        "WhatsApp desktop app and send WhatsApp messages."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "action": {"type": "STRING", "description": "open_whatsapp, message, send, call, video_call, accept_incoming, decline_incoming, or call_and_message"},
-            "contact": {"type": "STRING", "description": "WhatsApp contact name"},
-            "phone": {"type": "STRING", "description": "International phone number"},
-            "message": {"type": "STRING", "description": "Message text"},
-            "confirmation": {"type": "STRING", "description": "Legacy field, not required"},
+            "action": {
+                "type": "STRING",
+                "description": "open_whatsapp | message | send",
+            },
+            "contact": {
+                "type": "STRING",
+                "description": "WhatsApp contact name",
+            },
+            "phone": {
+                "type": "STRING",
+                "description": "International phone number",
+            },
+            "message": {
+                "type": "STRING",
+                "description": "Message text",
+            },
         },
         "required": ["action"],
     },
