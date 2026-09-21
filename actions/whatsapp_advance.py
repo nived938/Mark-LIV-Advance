@@ -188,36 +188,54 @@ def _click_search_and_find(contact):
     # Prefer actual row/item controls over a Text/Button child inside some
     # unrelated part of the chat. A clicked list item is our native proof that
     # the WhatsApp search result matched the requested contact.
-    type_priority = {
-        "listitem": 0,
-        "treeitem": 1,
-        "dataitem": 2,
-        "button": 3,
-        "text": 4,
+    type_bonus = {
+        "listitem": 30,
+        "treeitem": 28,
+        "dataitem": 26,
+        "button": 8,
+        "text": 0,
     }
     candidates.sort(
         key=lambda item: (
-            -item[0],
-            type_priority.get(
+            -(item[0] + type_bonus.get(
                 str(item[2].element_info.control_type or "").casefold(),
-                9,
-            ),
+                0,
+            )),
+            -item[0],
             len(item[1]),
         )
     )
 
     for _, selected_name, control in candidates:
+        control_type = str(
+            control.element_info.control_type or ""
+        ).casefold()
         try:
-            control.invoke()
+            try:
+                control.invoke()
+            except Exception:
+                control.click_input()
+
+            # On some WhatsApp builds invoke() only highlights the result.
+            # If the native search box still contains the query, press Enter
+            # through that same UIA control rather than sending a global key to
+            # whatever window happens to be active.
+            time.sleep(0.45)
+            try:
+                search_text = (search.window_text() or "").strip()
+            except Exception:
+                search_text = ""
+            if _norm_contact(search_text) == _norm_contact(target):
+                try:
+                    search.set_focus()
+                    search.type_keys("{ENTER}")
+                except Exception:
+                    pass
+
             time.sleep(1.2)
             return True, selected_name
         except Exception:
-            try:
-                control.click_input()
-                time.sleep(1.2)
-                return True, selected_name
-            except Exception:
-                continue
+            continue
 
     return False, f"No native WhatsApp search result matched '{target}'."
 
