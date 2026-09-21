@@ -386,12 +386,20 @@ class CallAudioRouter:
                     process_id=int(process_id),
                     device=capture_name,
                 )
+                if not result:
+                    # WhatsApp may put the actual media capture session in a
+                    # child process. Route every active WhatsApp.exe input
+                    # session as a second pass.
+                    result = war.set_app_input_device(
+                        process_name="WhatsApp.exe",
+                        device=capture_name,
+                    )
                 if result:
                     return True, (
                         f"WhatsApp microphone routed to '{capture_name}' "
                         f"for process {int(process_id)}."
                     )
-                last_error = "WhatsApp has no active input audio session yet."
+                last_error = "No active WhatsApp input audio session was exposed yet."
             except Exception as exc:
                 last_error = str(exc)
 
