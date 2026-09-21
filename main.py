@@ -1400,7 +1400,8 @@ class JarvisLive:
                                 outcome = "auto-busy-message-fallback"
                                 detail = (
                                     "voice call accepted, but JARVIS call audio "
-                                    "was unavailable; sent the busy message in WhatsApp."
+                                    f"was unavailable ({speech_error}); "
+                                    "sent the busy message in WhatsApp as fallback."
                                 )
                             else:
                                 outcome = "auto-busy-failed"
