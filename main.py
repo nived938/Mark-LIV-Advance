@@ -82,6 +82,8 @@ from core                      import undo as undo_stack
 from core                      import confirm as confirm_gate
 from core.call_attention      import CallAttentionMonitor
 from core.boot_sentry          import restore_broken_modules
+from core.call_audio           import ROUTER as CALL_AUDIO
+from core.call_manager         import active_rule, record_call, history_text
 from core                      import audio_devices
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
@@ -619,6 +621,7 @@ class JarvisLive:
         self._whatsapp_incoming_agent = None       # Windows WhatsApp incoming-call monitor
         self._call_attention_monitor = None         # Generic desktop-call monitor
         self._call_event_seen: dict[str, float] = {}
+        self._call_speech_active = False
 
         self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
         self._tuned_live    = True  # turn-taking / media / thinking knobs; same fallback
@@ -658,7 +661,12 @@ class JarvisLive:
         )
         self.ui.get_plugins = self._plugin_registry.list_for_ui
         self.ui.get_plugin_settings = self._plugin_registry.settings_schemas  # ⚙ settings tab
-        self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
+        self.ui.request_say = self.plugin_say
+        try:
+            from actions.whatsapp_advance import set_call_speaker
+            set_call_speaker(self._speak_to_active_call)
+        except Exception as e:
+            print(f"[CallAudio] Callback registration failed: {e}")   # plugins: mid-task speech channel
 
         # ── Wake word ────────────────────────────────────────────────────────
         # _awake gates the mic (see _listen_audio) and the background speakers.
@@ -837,6 +845,10 @@ class JarvisLive:
                 self._call_attention_monitor.stop()
         except Exception:
             pass
+        try:
+            CALL_AUDIO.stop()
+        except Exception:
+            pass
         loop = getattr(self, "_loop", None)
         if loop and not loop.is_closed():
             def _cancel_run():
@@ -911,6 +923,65 @@ class JarvisLive:
         manual = self._dashboard.get_manual_url()
         return url, key, f"{url}/auto-login?key={key}", manual
 
+    def _enqueue_caller_audio(self, packet) -> None:
+        if not self.out_queue or not packet:
+            return
+        try:
+            self.out_queue.put_nowait(packet)
+        except Exception:
+            pass
+
+    def _speak_to_active_call(self, message: str, caller: str = "", end_after: bool = False):
+        message = str(message or "").strip()
+        if not message:
+            return False, "No call message was provided."
+        loop = getattr(self, "_loop", None)
+        if loop is None or self.out_queue is None:
+            return False, "JARVIS audio session is not ready."
+
+        ok, detail = CALL_AUDIO.begin(loop, self._enqueue_caller_audio)
+        if not ok:
+            self.ui.write_log(f"ERR: Call audio bridge unavailable — {detail}")
+            return False, detail
+
+        self._call_speech_active = True
+        self.ui.write_log(
+            f"SYS: Speaking to {caller or 'caller'} through the active call."
+        )
+        try:
+            spoken, error = CALL_AUDIO.speak_to_phone(message)
+        finally:
+            self._call_speech_active = False
+
+        if not spoken:
+            stopped = "stopped" in str(error).lower()
+            CALL_AUDIO.stop()
+            return (True, "Call speech stopped.") if stopped else (False, error)
+
+        if end_after:
+            try:
+                from actions.whatsapp_incoming_agent import get_incoming_agent
+                ended, end_error = get_incoming_agent().hang_up()
+                CALL_AUDIO.stop()
+                if not ended:
+                    return False, f"Spoke to the caller, but could not end the call: {end_error}"
+                return True, "Spoke to the caller and ended the call."
+            except Exception as exc:
+                CALL_AUDIO.stop()
+                return False, str(exc)
+
+        CALL_AUDIO.stop()
+        return True, "Finished speaking to the caller."
+
+    def _stop_call_speech(self):
+        if not self._call_speech_active:
+            return False
+        CALL_AUDIO.stop_speech_to_phone()
+        CALL_AUDIO.stop()
+        self._call_speech_active = False
+        self.ui.write_log("SYS: Call speech stopped — you can talk directly now.")
+        return True
+
     def _on_external_call(self, event) -> None:
         """Turn a generic Windows desktop-call event into the normal JARVIS flow."""
         try:
@@ -929,6 +1000,28 @@ class JarvisLive:
         app = str(getattr(event, "app", "") or "Unknown app")
         caller = str(getattr(event, "caller", "") or "").strip()
         source = str(getattr(event, "source", "") or "desktop")
+
+        rule = active_rule()
+        if rule and app.casefold() != "whatsapp":
+            action = str(rule.get("action") or "").lower()
+            if action == "accept":
+                from actions.call_control import call_control
+                result = call_control({"action": "accept", "app": app})
+                record_call(app, caller, "auto-accepted" if "failed" not in result.lower() else "auto-accept-failed", source=source)
+                self.ui.write_log(f"SYS: {result}")
+                return
+            if action == "busy":
+                from actions.call_control import call_control
+                accepted = call_control({"action": "accept", "app": app})
+                if "failed" not in accepted.lower() and "no matching" not in accepted.lower():
+                    text = str(rule.get("message") or "").replace("{caller}", caller or "there")
+                    ok, detail = self._speak_to_active_call(text, caller or "caller", True)
+                    record_call(app, caller, "auto-busy" if ok else "auto-busy-failed", source=source, message=text)
+                    self.ui.write_log(f"SYS: {detail}")
+                else:
+                    record_call(app, caller, "auto-busy-accept-failed", source=source)
+                    self.ui.write_log(f"ERR: {accepted}")
+                return
 
         if app.casefold() == "whatsapp":
             from types import SimpleNamespace
@@ -1361,7 +1454,7 @@ class JarvisLive:
             "meeting_copilot", "knowledge_vault", "workflow_recorder",
             "event_rules", "hardware_diagnostics", "self_updater",
             "learning_rules", "self_heal", "smart_desktop", "office_builder",
-            "android_autopilot", "call_control",
+            "android_autopilot", "call_control", "call_rules", "call_audio",
             "jarvis_services", "public_api",
         }
 
@@ -1863,6 +1956,12 @@ class JarvisLive:
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt:
+                                if self._call_speech_active and any(
+                                    word in txt.casefold()
+                                    for word in ("stop", "cancel", "stop speaking", "let me talk")
+                                ):
+                                    self._stop_call_speech()
+                                    continue
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
                                 # Meeting Copilot captures microphone input
@@ -2734,6 +2833,10 @@ class JarvisLive:
         try:
             if self._call_attention_monitor is not None:
                 self._call_attention_monitor.stop()
+        except Exception:
+            pass
+        try:
+            CALL_AUDIO.stop()
         except Exception:
             pass
         try:
