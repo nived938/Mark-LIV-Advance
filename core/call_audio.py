@@ -42,6 +42,7 @@ class CallAudioRouter:
         self._one_way_original_capture = ""
         self._one_way_original_capture_roles = []
         self._one_way_render_device = None
+        self._one_way_capture_device_name = ""
 
     @staticmethod
     def _devices():
@@ -326,6 +327,7 @@ class CallAudioRouter:
                     "",
                 )
                 self._one_way_render_device = render_index
+                self._one_way_capture_device_name = capture_name
 
                 self._one_way_active = True
                 self._last_error = ""
@@ -360,7 +362,34 @@ class CallAudioRouter:
             self._one_way_original_capture = ""
             self._one_way_original_capture_roles = []
             self._one_way_render_device = None
+            self._one_way_capture_device_name = ""
             self._one_way_active = False
+
+    def bind_one_way_to_process(self, process_id: int) -> tuple[bool, str]:
+        """Bind a running app's capture endpoint to the one-way call route.
+
+        WhatsApp may have a per-application microphone choice that overrides the
+        Windows global communications microphone. Bind the actual native
+        WhatsApp process after acceptance, when its audio session exists.
+        """
+        with self._lock:
+            if not self._one_way_active:
+                return False, "One-way call speech routing is not active."
+            capture_name = str(self._one_way_capture_device_name or "").strip()
+        if not capture_name:
+            return False, "The one-way capture device is unknown."
+        try:
+            import winappaudiorouter as war
+            war.set_app_input_device(
+                pid=int(process_id),
+                device=capture_name,
+            )
+            return True, (
+                f"WhatsApp microphone routed to '{capture_name}' "
+                f"for process {int(process_id)}."
+            )
+        except Exception as exc:
+            return False, f"Could not bind the WhatsApp microphone to '{capture_name}': {exc}"
 
     def speak_one_way(self, text: str) -> tuple[bool, str]:
         """Speak through the normal Windows output so Stereo Mix carries it to WhatsApp."""
