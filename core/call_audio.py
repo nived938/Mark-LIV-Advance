@@ -40,6 +40,8 @@ class CallAudioRouter:
         self._speech_active = False
         self._one_way_active = False
         self._one_way_original_capture = ""
+        self._one_way_original_capture_roles = []
+        self._one_way_render_device = None
 
     @staticmethod
     def _devices():
@@ -188,31 +190,81 @@ class CallAudioRouter:
 
     @classmethod
     def _find_one_way_loopback(cls):
-        """Find a Windows loopback-style capture device such as Stereo Mix."""
+        """Find a one-way Windows audio route for sending TTS into a call.
+
+        Two families are supported:
+        - Hardware/software loopback inputs such as Stereo Mix.
+        - A normal two-endpoint VB-CABLE, where we render into "CABLE Input"
+          and select "CABLE Output" as the call microphone.
+        """
         if os.name != "nt" or sd is None:
             return None
-        terms = (
+
+        devices = cls._devices()
+        captures = []
+        renders = []
+
+        for index, dev in enumerate(devices):
+            name = str(dev.get("name", "")).strip()
+            low = name.casefold()
+            if dev.get("max_input_channels", 0):
+                captures.append((index, name, low))
+            if dev.get("max_output_channels", 0):
+                renders.append((index, name, low))
+
+        # Standard VB-CABLE / equivalent virtual cable.
+        cable_capture_terms = (
+            "cable output",
+            "vb-audio virtual cable b output",
+            "vb-audio point output",
+        )
+        for capture in captures:
+            if not any(term in capture[2] for term in cable_capture_terms):
+                continue
+
+            paired_render = None
+            if "cable output" in capture[2]:
+                for render in renders:
+                    if "cable input" in render[2]:
+                        paired_render = render[:2]
+                        break
+            elif "virtual cable b output" in capture[2]:
+                for render in renders:
+                    if "virtual cable b input" in render[2]:
+                        paired_render = render[:2]
+                        break
+            elif "point output" in capture[2]:
+                for render in renders:
+                    if "point input" in render[2]:
+                        paired_render = render[:2]
+                        break
+
+            if paired_render:
+                return {
+                    "capture": capture[:2],
+                    "render": paired_render,
+                }
+
+        # Hardware loopback devices. The normal Windows output device is fine
+        # for these because the loopback device captures the speaker mix.
+        loopback_terms = (
             "stereo mix",
             "what u hear",
             "wave out mix",
             "loopback",
             "speaker output",
         )
-        for index, dev in enumerate(cls._devices()):
-            name = str(dev.get("name", "")).strip()
-            low = name.casefold()
-            if dev.get("max_input_channels", 0) and any(term in low for term in terms):
-                return index, name
+        for capture in captures:
+            if any(term in capture[2] for term in loopback_terms):
+                return {
+                    "capture": capture[:2],
+                    "render": None,
+                }
+
         return None
 
     def begin_one_way(self) -> tuple[bool, str]:
-        """Route the PC's normal output into WhatsApp's communications mic.
-
-        This is a one-way fallback for TTS when the four-endpoint VB-CABLE
-        bridge is unavailable. It uses a Windows Stereo Mix/loopback input when
-        the audio driver exposes one. The original communications microphone is
-        restored by stop_one_way().
-        """
+        """Prepare one-way TTS routing into the Windows communications mic."""
         with self._lock:
             if self._one_way_active:
                 return True, "One-way call speech routing is already active."
@@ -220,51 +272,94 @@ class CallAudioRouter:
             if os.name != "nt" or sd is None:
                 return False, "One-way call speech routing is available on Windows only."
 
-            loopback = self._find_one_way_loopback()
-            if loopback is None:
+            route = self._find_one_way_loopback()
+            if route is None:
                 return False, (
-                    "Windows does not expose a Stereo Mix/loopback recording "
-                    "device. Enable Stereo Mix in Windows Sound settings or use "
-                    "a virtual audio cable."
+                    "No usable one-way audio route was found. Windows needs either "
+                    "Stereo Mix/What U Hear/loopback or a two-endpoint virtual cable "
+                    "(for example CABLE Input + CABLE Output)."
                 )
+
+            capture_index, capture_name = route["capture"]
+            render = route.get("render")
+            render_index, render_name = render if render else (None, "")
 
             try:
                 from pycaw.constants import EDataFlow, ERole
-                original = self._default_device_id(
-                    EDataFlow.eCapture, ERole.eCommunications
+
+                roles = (
+                    ERole.eConsole,
+                    ERole.eMultimedia,
+                    ERole.eCommunications,
                 )
-                self._one_way_original_capture = original
-                target_name = loopback[1]
-                target_id = self._device_id_by_name(target_name)
+                originals = []
+                for role in roles:
+                    originals.append(
+                        (role, self._default_device_id(EDataFlow.eCapture, role))
+                    )
+
+                target_id = self._device_id_by_name(capture_name)
                 if not target_id:
                     return False, (
-                        "Could not resolve the Windows Stereo Mix/loopback "
-                        "device through Core Audio."
+                        f"Could not resolve the one-way capture device '{capture_name}' "
+                        "through Windows Core Audio."
                     )
-                if not self._set_default(target_id, [ERole.eCommunications]):
-                    return False, "Could not set Stereo Mix as the Windows communications microphone."
+
+                changed = []
+                for role, _old_id in originals:
+                    if self._set_default(target_id, [role]):
+                        changed.append(role)
+
+                if len(changed) != len(roles):
+                    # Put every role we changed back immediately.
+                    for role, old_id in originals:
+                        if old_id:
+                            self._set_default(old_id, [role])
+                    return False, (
+                        f"Could not set '{capture_name}' as the Windows default "
+                        "recording device for all audio roles."
+                    )
+
+                self._one_way_original_capture_roles = originals
+                self._one_way_original_capture = next(
+                    (old_id for role, old_id in originals if role == ERole.eCommunications),
+                    "",
+                )
+                self._one_way_render_device = render_index
 
                 self._one_way_active = True
                 self._last_error = ""
-                return True, f"One-way call speech routing active via {target_name}."
+
+                if render_name:
+                    return True, (
+                        f"One-way call speech routing active: "
+                        f"{render_name} → {capture_name}."
+                    )
+                return True, (
+                    f"One-way call speech routing active via {capture_name}."
+                )
             except Exception as exc:
                 self._one_way_original_capture = ""
+                self._one_way_original_capture_roles = []
+                self._one_way_render_device = None
                 return False, str(exc)
 
     def stop_one_way(self) -> None:
         with self._lock:
-            if not self._one_way_active and not self._one_way_original_capture:
+            if not self._one_way_active and not self._one_way_original_capture_roles:
                 return
+
             try:
                 from pycaw.constants import ERole
-                if self._one_way_original_capture:
-                    self._set_default(
-                        self._one_way_original_capture,
-                        [ERole.eCommunications],
-                    )
+                for role, old_id in self._one_way_original_capture_roles:
+                    if old_id:
+                        self._set_default(old_id, [role])
             except Exception:
                 pass
+
             self._one_way_original_capture = ""
+            self._one_way_original_capture_roles = []
+            self._one_way_render_device = None
             self._one_way_active = False
 
     def speak_one_way(self, text: str) -> tuple[bool, str]:
@@ -277,6 +372,7 @@ class CallAudioRouter:
                 return False, "One-way call speech routing is not active."
             if sd is None:
                 return False, "sounddevice is not available."
+            render_device = self._one_way_render_device
 
         temp = Path(
             os.environ.get("TEMP", str(Path.home()))
@@ -308,14 +404,16 @@ class CallAudioRouter:
             if channels != 1 or width != 2:
                 return False, "Windows SAPI returned an unsupported audio format."
 
-            # device=None means the current Windows default output endpoint.
-            # Stereo Mix/loopback captures that endpoint into WhatsApp's mic.
+            # For a normal VB-CABLE, render directly into CABLE Input so
+            # CABLE Output (the communications microphone) receives the TTS.
+            # For Stereo Mix/loopback, device=None keeps the normal speaker
+            # output and the loopback captures it.
             stream = sd.RawOutputStream(
                 samplerate=rate,
                 channels=1,
                 dtype="int16",
                 blocksize=1024,
-                device=None,
+                device=render_device,
             )
             stream.start()
             try:
