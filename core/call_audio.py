@@ -36,6 +36,8 @@ class CallAudioRouter:
         self._loop = None
         self._original_roles = []
         self._last_error = ""
+        self._speech_stop = threading.Event()
+        self._speech_active = False
 
     @staticmethod
     def _devices():
@@ -277,6 +279,15 @@ class CallAudioRouter:
         with self._lock:
             return self._active
 
+    def stop_speech_to_phone(self) -> None:
+        with self._lock:
+            self._speech_stop.set()
+
+    @property
+    def speech_active(self) -> bool:
+        with self._lock:
+            return self._speech_active
+
     def speak_to_phone(self, text: str) -> tuple[bool, str]:
         """Render Windows SAPI speech to a WAV and play it only to Cable A."""
         text = str(text or "").strip()
@@ -287,6 +298,9 @@ class CallAudioRouter:
             return False, "The two-way call audio bridge is not active."
 
         temp = Path(os.environ.get("TEMP", str(Path.home()))) / f"jarvis-call-{time.time_ns()}.wav"
+        with self._lock:
+            self._speech_stop.clear()
+            self._speech_active = True
         try:
             import comtypes.client
             import pythoncom
@@ -322,6 +336,9 @@ class CallAudioRouter:
                 stream = self._output_stream
                 if not stream:
                     return False, "Call output stream is no longer active."
+                stopped = self._speech_stop.is_set()
+                if stopped:
+                    return False, "Speech stopped."
                 if rate != 24000:
                     # Open a temporary stream using the exact SAPI rate, then
                     # play it into the cable. This avoids a resampling library.
@@ -337,16 +354,26 @@ class CallAudioRouter:
                     )
                     temp_stream.start()
                     try:
-                        temp_stream.write(raw)
+                        for start in range(0, len(raw), 4800):
+                            if self._speech_stop.is_set():
+                                return False, "Speech stopped."
+                            temp_stream.write(raw[start:start + 4800])
                     finally:
                         temp_stream.stop()
                         temp_stream.close()
                 else:
-                    stream.write(raw)
+                    for start in range(0, len(raw), 4800):
+                        if self._speech_stop.is_set():
+                            return False, "Speech stopped."
+                        stream.write(raw[start:start + 4800])
+            if self._speech_stop.is_set():
+                return False, "Speech stopped."
             return True, ""
         except Exception as exc:
             return False, str(exc)
         finally:
+            with self._lock:
+                self._speech_active = False
             try:
                 temp.unlink()
             except Exception:
