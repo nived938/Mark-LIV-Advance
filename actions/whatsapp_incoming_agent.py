@@ -737,6 +737,84 @@ class WhatsAppIncomingAgent:
         candidates.sort(key=lambda item: (-item[0], len(item[1])))
         return candidates[0][1]
 
+    def _resolve_chat_contact(self, caller: str) -> str:
+        """Resolve a short caller name to the best native WhatsApp display name."""
+        target = self._norm(caller)
+        if not target:
+            return ""
+
+        candidates = []
+        reject = set(_GENERIC) | {
+            "chats", "calls", "status", "updates", "settings", "new chat",
+            "communities", "archived", "search", "contacts",
+        }
+        reject_contains = (
+            "type a message", "web content", "missed call", "voice call",
+            "video call", "unread message", "message info",
+        )
+
+        for window in self._find_whatsapp_windows():
+            if not self._is_native_whatsapp_window(window):
+                continue
+            try:
+                controls = window.descendants()
+            except Exception:
+                controls = []
+
+            for control in controls:
+                try:
+                    text = self._safe_text(control).strip()
+                    low = self._norm(text)
+                    if not text or low in reject or len(text) > 60:
+                        continue
+                    if any(item in low for item in reject_contains):
+                        continue
+
+                    control_type = str(
+                        control.element_info.control_type or ""
+                    ).casefold()
+                    if control_type not in {
+                        "text", "button", "listitem", "treeitem", "dataitem"
+                    }:
+                        continue
+
+                    # Ignore tiny lowercase technical fragments.
+                    if len(text) <= 3 and text.islower():
+                        continue
+
+                    score = 0
+                    if low == target:
+                        score += 100
+                    elif low.startswith(target + " "):
+                        score += 92
+                    elif target.startswith(low + " "):
+                        score += 85
+
+                    target_tokens = set(target.split())
+                    candidate_tokens = set(low.split())
+                    overlap = len(target_tokens & candidate_tokens)
+                    if overlap:
+                        score += 20 + min(20, overlap * 10)
+
+                    ratio = SequenceMatcher(None, low, target).ratio()
+                    score += int(ratio * 25)
+
+                    if control_type in {"listitem", "treeitem", "dataitem"}:
+                        score += 15
+                    if len(text.split()) <= 5:
+                        score += 5
+
+                    if score >= 85:
+                        candidates.append((score, text))
+                except Exception:
+                    continue
+
+        if not candidates:
+            return ""
+
+        candidates.sort(key=lambda item: (-item[0], len(item[1])))
+        return candidates[0][1]
+
     def _extract_caller(self, window) -> str:
         """Extract the caller from the native WhatsApp call dialog.
 
@@ -863,6 +941,8 @@ class WhatsAppIncomingAgent:
 
         if not caller:
             caller = self._best_whatsapp_chat_caller()
+        else:
+            caller = self._resolve_chat_contact(caller) or caller
 
         # Detector 3a: UI Automation.
         for window in self._find_whatsapp_windows():
@@ -877,10 +957,11 @@ class WhatsAppIncomingAgent:
             if self._norm(detected_caller) not in {
                 "someone", "non client input sink window"
             }:
-                # The native call dialog is authoritative when it exposes a
-                # caller name. Override notification/WPNDB guesses such as
-                # 'cb' with the actual WhatsApp display name.
-                caller = detected_caller
+                # Prefer the native call dialog, then resolve short names such
+                # as "Malu" against the actual WhatsApp contact display name,
+                # such as "Malu Chechi".
+                resolved_caller = self._resolve_chat_contact(detected_caller)
+                caller = resolved_caller or detected_caller
             sources.append("uia")
             return IncomingCall(
                 caller=caller or "someone",
