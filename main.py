@@ -1167,6 +1167,107 @@ class JarvisLive:
         caller = caller or "unknown caller"
         self.ui.write_log(f"SYS: Incoming WhatsApp call from {caller}.")
 
+        # Temporary call rules are local and deterministic. WhatsApp has a
+        # specialized detector/controller, so apply the active rule before the
+        # persistent WhatsApp busy setting or normal "accept/decline?" prompt.
+        rule = active_rule()
+
+        if rule:
+            rule_action = str(rule.get("action") or "").strip().lower()
+
+            if rule_action == "accept":
+                try:
+                    from actions.whatsapp_incoming_agent import get_incoming_agent
+                    agent = get_incoming_agent()
+                    ok, detail = agent.accept()
+                    outcome = "auto-accepted" if ok else "auto-accept-failed"
+                    record_call("WhatsApp", caller, outcome, source="call-rule")
+                    self._queue_call_report("WhatsApp", caller, outcome)
+                    self.ui.write_log(
+                        f"SYS: WhatsApp temporary accept rule "
+                        f"{'complete' if ok else 'failed'}"
+                        + (f" — {detail}" if detail else "")
+                    )
+                except Exception as exc:
+                    record_call("WhatsApp", caller, "auto-accept-failed", source="call-rule")
+                    self._queue_call_report("WhatsApp", caller, "auto-accept-failed")
+                    self.ui.write_log(
+                        f"ERR: WhatsApp temporary accept rule failed — {exc}"
+                    )
+                return
+
+            if rule_action == "busy":
+                busy_message = str(
+                    rule.get("message")
+                    or "Hello {caller}, unfortunately Nived is busy. Call him again later. Bye"
+                ).replace("{caller}", caller or "there")
+
+                def _handle_rule_busy():
+                    try:
+                        from actions.whatsapp_incoming_agent import get_incoming_agent
+                        agent = get_incoming_agent()
+                        accepted, accept_error = agent.accept()
+                        if not accepted:
+                            record_call(
+                                "WhatsApp",
+                                caller,
+                                "auto-busy-accept-failed",
+                                source="call-rule",
+                                message=busy_message,
+                            )
+                            self._queue_call_report(
+                                "WhatsApp", caller, "auto-busy-accept-failed"
+                            )
+                            self.ui.write_log(
+                                f"ERR: WhatsApp temporary busy rule failed — {accept_error}"
+                            )
+                            return
+
+                        spoken, speech_error = self._speak_to_active_call(
+                            busy_message,
+                            caller or "caller",
+                            True,
+                            "WhatsApp",
+                        )
+                        outcome = "auto-busy" if spoken else "auto-busy-failed"
+                        record_call(
+                            "WhatsApp",
+                            caller,
+                            outcome,
+                            source="call-rule",
+                            message=busy_message,
+                        )
+                        self._queue_call_report("WhatsApp", caller, outcome)
+                        self.ui.write_log(
+                            f"SYS: WhatsApp temporary busy rule "
+                            f"{'complete' if spoken else 'failed'} — "
+                            f"{speech_error or 'done'}"
+                        )
+                    except Exception as exc:
+                        try:
+                            from actions.whatsapp_incoming_agent import get_incoming_agent
+                            get_incoming_agent().hang_up()
+                        except Exception:
+                            pass
+                        record_call(
+                            "WhatsApp",
+                            caller,
+                            "auto-busy-failed",
+                            source="call-rule",
+                            message=busy_message,
+                        )
+                        self._queue_call_report("WhatsApp", caller, "auto-busy-failed")
+                        self.ui.write_log(
+                            f"ERR: WhatsApp temporary busy rule failed — {exc}"
+                        )
+
+                threading.Thread(
+                    target=_handle_rule_busy,
+                    name="WhatsAppCallRuleBusy",
+                    daemon=True,
+                ).start()
+                return
+
         try:
             from actions.whatsapp_incoming_agent import get_busy_mode, auto_busy_reply
             busy_enabled, _busy_message = get_busy_mode()
