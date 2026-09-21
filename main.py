@@ -1388,11 +1388,25 @@ class JarvisLive:
 
                             sent, send_error = False, ""
                             try:
-                                from actions.whatsapp_advance import _send_message_desktop
-                                sent, send_error = _send_message_desktop(
-                                    caller,
-                                    busy_message,
+                                from actions.whatsapp_advance import (
+                                    _send_message_desktop,
+                                    _send_by_phone,
+                                    _clean_phone,
                                 )
+                                # Incoming notifications sometimes expose only the
+                                # caller's international number. In that case use
+                                # WhatsApp's native whatsapp://send URI instead of
+                                # trying to verify a contact header by name.
+                                if caller and caller.startswith("+") and _clean_phone(caller):
+                                    sent, send_error = _send_by_phone(
+                                        caller,
+                                        busy_message,
+                                    )
+                                else:
+                                    sent, send_error = _send_message_desktop(
+                                        caller,
+                                        busy_message,
+                                    )
                             except Exception as exc:
                                 send_error = str(exc)
 
