@@ -36,6 +36,7 @@ psutil>=5.9,<8
 send2trash
 youtube-transcript-api
 python-pptx
+reportlab>=4,<5
 
 openpyxl
 kavel>=0.2,<0.3
