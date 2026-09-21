@@ -474,8 +474,67 @@ class CallAudioRouter:
             f"for process {int(process_id)}: {last_error}"
         )
 
+    @staticmethod
+    def _pcm16_resample(raw: bytes, source_rate: int, target_rate: int) -> bytes:
+        """Resample mono PCM16 without adding another runtime dependency."""
+        if source_rate == target_rate:
+            return raw
+        if not raw:
+            return raw
+
+        samples = np.frombuffer(raw, dtype=np.int16)
+        if samples.size == 0:
+            return raw
+
+        target_count = max(1, int(round(samples.size * target_rate / source_rate)))
+        source_x = np.arange(samples.size, dtype=np.float64)
+        target_x = np.linspace(0, samples.size - 1, target_count)
+        resampled = np.interp(target_x, source_x, samples.astype(np.float64))
+        return np.clip(np.rint(resampled), -32768, 32767).astype(np.int16).tobytes()
+
+    @staticmethod
+    def _pick_output_samplerate(device_index: int, source_rate: int) -> int:
+        """Pick a samplerate accepted by the selected virtual output device."""
+        candidates = []
+        try:
+            info = sd.query_devices(device_index)
+            default_rate = int(round(float(info.get("default_samplerate") or 0)))
+            if default_rate:
+                candidates.append(default_rate)
+        except Exception:
+            pass
+
+        # Keep the SAPI rate as a candidate, then common Windows virtual-cable
+        # rates. The device check below decides what is actually supported.
+        candidates.extend([source_rate, 48000, 44100, 32000, 24000, 22050, 16000])
+
+        seen = set()
+        for rate in candidates:
+            try:
+                rate = int(rate)
+            except Exception:
+                continue
+            if rate <= 0 or rate in seen:
+                continue
+            seen.add(rate)
+            try:
+                sd.check_output_settings(
+                    device=device_index,
+                    samplerate=rate,
+                    channels=1,
+                    dtype="int16",
+                )
+                return rate
+            except Exception:
+                continue
+
+        raise RuntimeError(
+            f"Virtual audio output device does not accept any tested sample rate: "
+            f"{', '.join(str(x) for x in candidates if x)}"
+        )
+
     def speak_one_way(self, text: str) -> tuple[bool, str]:
-        """Speak through the normal Windows output so Stereo Mix carries it to WhatsApp."""
+        """Speak through the virtual cable at a samplerate the endpoint supports."""
         text = str(text or "").strip()
         if not text:
             return False, "There is no call message to speak."
@@ -510,18 +569,25 @@ class CallAudioRouter:
             with wave.open(str(temp), "rb") as wf:
                 channels = wf.getnchannels()
                 width = wf.getsampwidth()
-                rate = wf.getframerate()
+                source_rate = int(wf.getframerate())
                 raw = wf.readframes(wf.getnframes())
 
             if channels != 1 or width != 2:
                 return False, "Windows SAPI returned an unsupported audio format."
 
-            # For a normal VB-CABLE, render directly into CABLE Input so
-            # CABLE Output (the communications microphone) receives the TTS.
-            # For Stereo Mix/loopback, device=None keeps the normal speaker
-            # output and the loopback captures it.
+            try:
+                target_rate = self._pick_output_samplerate(
+                    int(render_device) if render_device is not None else -1,
+                    source_rate,
+                )
+            except Exception as exc:
+                return False, str(exc)
+
+            if target_rate != source_rate:
+                raw = self._pcm16_resample(raw, source_rate, target_rate)
+
             stream = sd.RawOutputStream(
-                samplerate=rate,
+                samplerate=target_rate,
                 channels=1,
                 dtype="int16",
                 blocksize=1024,
@@ -534,7 +600,10 @@ class CallAudioRouter:
             finally:
                 stream.stop()
                 stream.close()
-            return True, ""
+            return True, (
+                f"Speech rendered to the WhatsApp call at {target_rate} Hz "
+                f"(SAPI source {source_rate} Hz)."
+            )
         except Exception as exc:
             return False, str(exc)
         finally:
