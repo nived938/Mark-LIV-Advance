@@ -3233,7 +3233,21 @@ class MainWindow(QMainWindow):
         try:
             cb = getattr(self, "on_close", None)
             if cb is not None:
-                cb()
+                result = cb()
+
+                # Some shutdown callbacks, such as MobileGateway.stop(),
+                # are asynchronous coroutines. Schedule/run them correctly
+                # instead of leaving the coroutine un-awaited.
+                import inspect
+                if inspect.isawaitable(result):
+                    import asyncio
+
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(result)
+                    except RuntimeError:
+                        asyncio.run(result)
+
         except Exception as exc:
             print(f"[UI] Close cleanup request failed: {exc}")
         event.accept()
