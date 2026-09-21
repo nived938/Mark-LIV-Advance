@@ -113,6 +113,9 @@ class SmartHomeService:
         host = str(item["host"])
         return GOOGLE_TV.command(host, action, value)
 
+    def tv_discover(self) -> str:
+        return GOOGLE_TV.discover()
+
     def tv_pair_start(self, host: str, name: str = "", brand: str = "Panasonic") -> str:
         result = GOOGLE_TV.pair_start(host)
         if result.startswith("Pairing started"):
