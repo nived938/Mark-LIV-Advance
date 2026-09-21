@@ -130,7 +130,8 @@ class SelfHealEngine:
             except Exception as exc:
                 return f"Repair rejected by compile validation: {exc}"
             BACKUPS.mkdir(parents=True, exist_ok=True)
-            backup = BACKUPS / f"{path.stem}-{time.strftime("%Y%m%d-%H%M%S")}-{path.stat().st_mtime_ns}.py"
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            backup = BACKUPS / f"{path.stem}-{stamp}-{path.stat().st_mtime_ns}.py"
             shutil.copy2(path, backup)
             path.write_text(candidate, encoding="utf-8")
             ok, err = self._compile(path)
@@ -161,7 +162,7 @@ class SelfHealEngine:
             if not self._failures:
                 return "Self-healing is active; no repeated module failures are recorded."
             return "Self-healing status:\n" + "\n".join(
-                f"{name}: {rec.get("count", 0)} failures — {rec.get("last_error", "")[:180]}"
+                f"{name}: {rec.get('count', 0)} failures — {rec.get('last_error', '')[:180]}"
                 for name, rec in sorted(self._failures.items())
             )
 
